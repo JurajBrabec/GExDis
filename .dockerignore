@@ -1,0 +1,6 @@
+.git
+.github
+.agents
+app/gexdis*
+node_modules
+tmp

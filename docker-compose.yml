@@ -1,0 +1,23 @@
+services:
+  gexdis:
+    build:
+      context: .
+    ports:
+      - "3000:3000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      CONFIG_DIR: /app/config
+      TMP_DIR: /app/tmp
+      DOWNLOAD_DIR: /app/download
+      RELEASE_DIR: /app/release
+      BIN_DIR: /app/bin
+      LOG_DIR: /app/log
+      LOG_RETENTION_DAYS: 30
+    volumes:
+      - ./app/config:/app/config:ro
+      - ./app/tmp:/app/tmp
+      - ./app/download:/app/download
+      - ./app/release:/app/release
+      - ./app/bin:/app/bin
+      - ./app/log:/app/log

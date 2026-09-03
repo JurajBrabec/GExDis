@@ -1,0 +1,21 @@
+{
+  "name": "gexdis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/main.ts",
+    "build": "bun build src/main.ts --compile --outfile app/gexdis",
+    "start": "./app/gexdis",
+    "test": "bun test",
+    "lint": "bun x tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0"
+  },
+  "dependencies": {
+    "@zip.js/zip.js": "^2.9.0",
+    "node-unrar-js": "^2.0.2",
+    "yaml": "^2.9.0"
+  }
+}
