@@ -213,7 +213,7 @@ export async function processDownloads(
       if (!isAllowedUrl(link.url)) {
         throw new Error('Download host is not allowed');
       }
-      const response = await fetchAllowed(link.url);
+      const { response } = await fetchAllowed(link.url);
       if (!response.ok) {
         throw new Error(`Download returned HTTP ${response.status}`);
       }

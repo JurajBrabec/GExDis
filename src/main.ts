@@ -68,7 +68,9 @@ export async function handleRequest(request: Request): Promise<Response> {
   }
 
   try {
-    const response = await fetchAllowed(selected.variant.pageUrl(source));
+    let { response, url: resolvedUrl } = await fetchAllowed(
+      selected.variant.pageUrl(source),
+    );
     if (!response.ok) {
       await logger.warn('Source page returned an error', {
         status: response.status,
@@ -78,8 +80,29 @@ export async function handleRequest(request: Request): Promise<Response> {
         422,
       );
     }
-    const links = selected.variant.extractLinks(source, await response.text());
-    const captures = { ...selected.captures };
+    // Re-derive the page URL once redirects (e.g. /releases/latest) resolve, refetching if it changed.
+    // resolvedUrl is kept as the pre-transform URL so capture derivation (e.g. TAG) still applies.
+    const transformedUrl = selected.variant.pageUrl(resolvedUrl);
+    if (transformedUrl !== resolvedUrl) {
+      ({ response } = await fetchAllowed(transformedUrl));
+      if (!response.ok) {
+        await logger.warn('Source page returned an error', {
+          status: response.status,
+        });
+        return json(
+          { error: `Source page returned HTTP ${response.status}` },
+          422,
+        );
+      }
+    }
+    const links = selected.variant.extractLinks(
+      resolvedUrl,
+      await response.text(),
+    );
+    const captures = {
+      ...selected.captures,
+      ...selected.variant.deriveCaptures(resolvedUrl),
+    };
     const downloads = selected.variant.matchingDownloads(
       links,
       captures,

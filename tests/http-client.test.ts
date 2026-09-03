@@ -18,8 +18,9 @@ test('follows allowed redirects', async () => {
         })
       : new Response('ok');
   }) as unknown as typeof fetch;
-  const response = await fetchAllowed('https://github.com/acme/start');
+  const { response, url } = await fetchAllowed('https://github.com/acme/start');
   expect(await response.text()).toBe('ok');
+  expect(url).toBe('https://github.com/acme/tool');
   expect(calls).toBe(2);
 });
 

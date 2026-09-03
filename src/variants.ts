@@ -30,10 +30,18 @@ export abstract class Variant {
     for (const rule of this.rules) {
       const result = matchRule(rule.url, url);
       if (result.matched) {
-        return { rule, captures: result.captures };
+        return {
+          rule,
+          captures: { ...this.deriveCaptures(url), ...result.captures },
+        };
       }
     }
     return undefined;
+  }
+
+  // Structural captures derived from the URL itself, e.g. path segments; explicit regex captures win on conflict.
+  deriveCaptures(_url: string): Record<string, string> {
+    return {};
   }
 
   pageUrl(url: string): string {
@@ -79,9 +87,23 @@ function extractAnchorLinks(pageUrl: string, html: string): PageLink[] {
   return links;
 }
 
+const githubUrlPattern =
+  /^\/(?<ORG>[^/]+)\/(?<REPO>[^/]+)\/releases\/(?:tag\/(?<TAG>[^/]+)|latest)\/?$/;
+
 export class GitHubReleaseVariant extends Variant {
   constructor(rules: RuleSet[]) {
     super('github', rules);
+  }
+
+  deriveCaptures(url: string): Record<string, string> {
+    const match = githubUrlPattern.exec(new URL(url).pathname);
+    if (!match?.groups) return {};
+    const captures: Record<string, string> = {
+      ORG: match.groups.ORG,
+      REPO: match.groups.REPO,
+    };
+    if (match.groups.TAG) captures.TAG = match.groups.TAG;
+    return captures;
   }
 
   pageUrl(url: string): string {
@@ -107,9 +129,9 @@ export const defaultRules: Record<string, RuleSet[]> = {
   github: [
     {
       name: deriveNameFromUrl(
-        '^https://github\\.com/(?<ORG>.+)/(?<REPO>.+)/releases/tag/(?<TAG>.+)$',
+        '^https://github\\.com/[^/]+/[^/]+/releases/tag/.+$',
       ),
-      url: '^https://github\\.com/(?<ORG>.+)/(?<REPO>.+)/releases/tag/(?<TAG>.+)$',
+      url: '^https://github\\.com/[^/]+/[^/]+/releases/tag/.+$',
       get: ['(?<EXE_NAME>[^/]+\\.exe)$', '(?<ZIP_NAME>[^/]+\\.zip)$'],
       unpack: ['^{ZIP_NAME}$'],
       copy: [

@@ -65,3 +65,49 @@ test('allows variant hosts and rejects unrelated hosts', () => {
   expect(isAllowedUrl('https://cdn.github.com/file.zip')).toBe(true);
   expect(isAllowedUrl('https://example.com/file.zip')).toBe(false);
 });
+
+test('derives ORG/REPO/TAG from the URL even without regex capture groups', () => {
+  const variant = new GitHubReleaseVariant([
+    {
+      name: 'bare',
+      url: '^https://github\\.com/.+/.+/releases/tag/.+$',
+      get: [],
+      copy: [],
+    },
+  ]);
+  expect(
+    variant.matchingRule('https://github.com/acme/tool/releases/tag/v1.0.0')
+      ?.captures,
+  ).toEqual({ ORG: 'acme', REPO: 'tool', TAG: 'v1.0.0' });
+});
+
+test('derives ORG/REPO without TAG for a /releases/latest URL', () => {
+  const variant = new GitHubReleaseVariant([
+    {
+      name: 'bare',
+      url: '^https://github\\.com/.+/.+/releases/latest$',
+      get: [],
+      copy: [],
+    },
+  ]);
+  const captures = variant.matchingRule(
+    'https://github.com/acme/tool/releases/latest',
+  )?.captures;
+  expect(captures).toEqual({ ORG: 'acme', REPO: 'tool' });
+});
+
+test('lets an explicit regex capture override the derived value', () => {
+  const variant = new GitHubReleaseVariant([
+    {
+      name: 'custom',
+      url: '^https://github\\.com/.+/.+/releases/tag/(?<ORG>.+)$',
+      get: [],
+      copy: [],
+    },
+  ]);
+  const captures = variant.matchingRule(
+    'https://github.com/acme/tool/releases/tag/v1',
+  )?.captures;
+  // the rule's own (?<ORG>...) group captures the tag segment, which must win over the derived "acme"
+  expect(captures?.ORG).toBe('v1');
+});
