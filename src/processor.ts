@@ -26,6 +26,47 @@ interface ProcessorConfig {
   appDir: string;
 }
 
+// Tracks, per link, which raw copy-rule strings were invalid, resolvable, or actually matched a file.
+interface CopyRuleTracker {
+  invalid: Set<string>;
+  resolved: Set<string>;
+  matched: Set<string>;
+}
+
+function createCopyRuleTracker(): CopyRuleTracker {
+  return { invalid: new Set(), resolved: new Set(), matched: new Set() };
+}
+
+function reportUnmatchedCopyRules(
+  variant: Variant,
+  link: PageLink,
+  rule: RuleSet,
+  tracker: CopyRuleTracker,
+  actions: ActionResult[],
+  logger: Logger,
+): Promise<void[]> {
+  return Promise.all(
+    rule.copy
+      .filter(
+        (copyRule) =>
+          tracker.resolved.has(copyRule) && !tracker.matched.has(copyRule),
+      )
+      .map(async (copyRule) => {
+        actions.push({
+          variant: variant.name,
+          url: link.url,
+          status: 'failed',
+          error: `No file matched copy rule: "${copyRule}"`,
+        });
+        await logger.warn('Copy rule matched no files', {
+          variant: variant.name,
+          url: link.url,
+          rule: copyRule,
+        });
+      }),
+  );
+}
+
 function safeName(link: PageLink): string {
   const name = basename(new URL(link.url).pathname);
   return name && name !== '.' && name !== '..' ? name : 'download';
@@ -69,6 +110,7 @@ async function copyMatching(
   appDir: string,
   actions: ActionResult[],
   logger: Logger,
+  tracker: CopyRuleTracker,
   directCandidate?: string,
 ): Promise<void> {
   const sourceIsDirectory = (await stat(sourceRoot)).isDirectory();
@@ -83,15 +125,30 @@ async function copyMatching(
     ).replaceAll('\\', '/');
     for (const copyRule of rule.copy) {
       const parsed = parseCopyRule(copyRule);
-      if (!parsed) continue;
+      if (!parsed) {
+        if (!tracker.invalid.has(copyRule)) {
+          tracker.invalid.add(copyRule);
+          actions.push({
+            variant: variant.name,
+            url: link.url,
+            status: 'failed',
+            error: `Invalid copy rule format: "${copyRule}"`,
+          });
+          await logger.error('Invalid copy rule format', {
+            variant: variant.name,
+            url: link.url,
+            rule: copyRule,
+          });
+        }
+        continue;
+      }
       const sourcePattern = expandPlaceholders(parsed.source, captures);
       const destination = expandPlaceholders(parsed.target, captures);
-      if (
-        sourcePattern === undefined ||
-        destination === undefined ||
-        !matchRule(sourcePattern, candidate).matched
-      )
-        continue;
+      // Unresolved placeholders mean this rule doesn't apply given the current captures - not an error.
+      if (sourcePattern === undefined || destination === undefined) continue;
+      tracker.resolved.add(copyRule);
+      if (!matchRule(sourcePattern, candidate).matched) continue;
+      tracker.matched.add(copyRule);
       const destinationDirectory = resolve(targetPath(destination, appDir));
       const destinationName = sourceIsDirectory
         ? basename(sourcePath)
@@ -103,29 +160,50 @@ async function copyMatching(
       const destinationPath = destinationIsFile
         ? destinationDirectory
         : join(destinationDirectory, destinationName);
-      await mkdir(
-        destinationIsFile
-          ? resolve(dirname(destinationPath))
-          : destinationDirectory,
-        { recursive: true },
-      );
-      if ((await stat(sourcePath)).isDirectory()) {
-        await cp(sourcePath, destinationPath, { recursive: true, force: true });
-      } else {
-        await copyFile(sourcePath, destinationPath);
+      try {
+        await mkdir(
+          destinationIsFile
+            ? resolve(dirname(destinationPath))
+            : destinationDirectory,
+          { recursive: true },
+        );
+        if ((await stat(sourcePath)).isDirectory()) {
+          await cp(sourcePath, destinationPath, {
+            recursive: true,
+            force: true,
+          });
+        } else {
+          await copyFile(sourcePath, destinationPath);
+        }
+        actions.push({
+          variant: variant.name,
+          url: link.url,
+          status: 'copied',
+          path: destinationPath,
+        });
+        await logger.info('File copied', {
+          variant: variant.name,
+          url: link.url,
+          source: candidate,
+          destination: destinationPath,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Copy failed';
+        actions.push({
+          variant: variant.name,
+          url: link.url,
+          status: 'failed',
+          path: destinationPath,
+          error: message,
+        });
+        await logger.error('File copy failed', {
+          variant: variant.name,
+          url: link.url,
+          source: candidate,
+          destination: destinationPath,
+          error: message,
+        });
       }
-      actions.push({
-        variant: variant.name,
-        url: link.url,
-        status: 'copied',
-        path: destinationPath,
-      });
-      await logger.info('File copied', {
-        variant: variant.name,
-        url: link.url,
-        source: candidate,
-        destination: destinationPath,
-      });
     }
   }
 }
@@ -139,6 +217,7 @@ async function unpackNested(
   config: ProcessorConfig,
   actions: ActionResult[],
   logger: Logger,
+  tracker: CopyRuleTracker,
 ): Promise<void> {
   if (!rule.unpack) return;
   const nestedArchives = (await filesUnder(root)).filter((path) =>
@@ -177,6 +256,7 @@ async function unpackNested(
       config.appDir,
       actions,
       logger,
+      tracker,
     );
     await unpackNested(
       variant,
@@ -187,6 +267,7 @@ async function unpackNested(
       config,
       actions,
       logger,
+      tracker,
     );
   }
 }
@@ -209,6 +290,7 @@ export async function processDownloads(
       `${crypto.randomUUID()}-${name}`,
     );
     const itemRoot = `${temporaryPath}-contents`;
+    const copyRuleTracker = createCopyRuleTracker();
     try {
       if (!isAllowedUrl(link.url)) {
         throw new Error('Download host is not allowed');
@@ -269,6 +351,7 @@ export async function processDownloads(
           config.appDir,
           actions,
           logger,
+          copyRuleTracker,
         );
         await unpackNested(
           variant,
@@ -279,6 +362,7 @@ export async function processDownloads(
           config,
           actions,
           logger,
+          copyRuleTracker,
         );
       }
       await copyMatching(
@@ -291,7 +375,16 @@ export async function processDownloads(
         config.appDir,
         actions,
         logger,
+        copyRuleTracker,
         name,
+      );
+      await reportUnmatchedCopyRules(
+        variant,
+        link,
+        rule,
+        copyRuleTracker,
+        actions,
+        logger,
       );
     } catch (error) {
       const message =

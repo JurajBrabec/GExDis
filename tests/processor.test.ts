@@ -106,6 +106,120 @@ test('copies a single file to every matching copy rule destination', async () =>
   );
 });
 
+test('reports an invalid copy rule as a failed action', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+  temporaryDirectories.push(directory);
+  const tempDir = join(directory, 'tmp');
+  const appDir = join(directory, 'app');
+  const logger = new Logger(join(directory, 'log'));
+  const variant = new GitHubReleaseVariant(defaultRules.github);
+  const link = {
+    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
+    path: '/tool.exe',
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(() =>
+    Promise.resolve(new Response('binary')),
+  ) as unknown as typeof fetch;
+
+  const actions = await processDownloads(
+    variant,
+    { name: 'test', url: 'url', get: ['\\.exe$'], copy: ['missing-colon'] },
+    [{ ...link, captures: {} }],
+    {},
+    { tempDir, appDir },
+    logger,
+  );
+  globalThis.fetch = originalFetch;
+
+  expect(actions.map((action) => action.status)).toEqual([
+    'downloaded',
+    'failed',
+  ]);
+  expect(actions.at(-1)?.error).toContain('Invalid copy rule format');
+});
+
+test('reports a copy rule that matched no file as a failed action', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+  temporaryDirectories.push(directory);
+  const tempDir = join(directory, 'tmp');
+  const appDir = join(directory, 'app');
+  const logger = new Logger(join(directory, 'log'));
+  const variant = new GitHubReleaseVariant(defaultRules.github);
+  const link = {
+    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
+    path: '/tool.exe',
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(() =>
+    Promise.resolve(new Response('binary')),
+  ) as unknown as typeof fetch;
+
+  const actions = await processDownloads(
+    variant,
+    {
+      name: 'test',
+      url: 'url',
+      get: ['\\.exe$'],
+      copy: ['^does-not-exist\\.exe$:/app/bin'],
+    },
+    [{ ...link, captures: {} }],
+    {},
+    { tempDir, appDir },
+    logger,
+  );
+  globalThis.fetch = originalFetch;
+
+  expect(actions.map((action) => action.status)).toEqual([
+    'downloaded',
+    'failed',
+  ]);
+  expect(actions.at(-1)?.error).toContain('No file matched copy rule');
+});
+
+test('reports a copy filesystem error without aborting other copy rules', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+  temporaryDirectories.push(directory);
+  const tempDir = join(directory, 'tmp');
+  const appDir = join(directory, 'app');
+  // occupy the destination path with a file so mkdir(destinationDirectory) fails
+  await Bun.write(join(appDir, 'bin'), 'blocking-file');
+  const logger = new Logger(join(directory, 'log'));
+  const variant = new GitHubReleaseVariant(defaultRules.github);
+  const link = {
+    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
+    path: '/tool.exe',
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(() =>
+    Promise.resolve(new Response('binary')),
+  ) as unknown as typeof fetch;
+
+  const actions = await processDownloads(
+    variant,
+    {
+      name: 'test',
+      url: 'url',
+      get: ['\\.exe$'],
+      copy: ['^tool\\.exe$:/app/bin/tool.exe', '^tool\\.exe$:/app/download'],
+    },
+    [{ ...link, captures: {} }],
+    {},
+    { tempDir, appDir },
+    logger,
+  );
+  globalThis.fetch = originalFetch;
+
+  expect(actions.map((action) => action.status)).toEqual([
+    'downloaded',
+    'failed',
+    'copied',
+  ]);
+  expect(await readFile(join(appDir, 'download', 'tool.exe'), 'utf8')).toBe(
+    'binary',
+  );
+});
+
 test('reports a failed download and continues processing other links', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
   temporaryDirectories.push(directory);
