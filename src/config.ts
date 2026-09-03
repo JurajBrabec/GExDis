@@ -12,10 +12,18 @@ export interface AppConfig {
   logLevel: string;
   logRetentionDays: number;
   dryRun: boolean;
+  idleTimeoutSeconds: number;
 }
 
 function booleanFromEnvironment(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test(value ?? '');
+}
+
+// Bun.serve's idleTimeout is a uint8 (0-255 seconds); 0 disables the timeout.
+function idleTimeoutFromEnvironment(value: string | undefined): number {
+  const parsed = Number(value ?? '60');
+  if (!Number.isFinite(parsed)) return 60;
+  return Math.min(255, Math.max(0, Math.trunc(parsed)));
 }
 
 export function loadConfig(environment = process.env): AppConfig {
@@ -38,5 +46,6 @@ export function loadConfig(environment = process.env): AppConfig {
     logLevel: environment.LOG_LEVEL ?? 'info',
     logRetentionDays: Number(environment.LOG_RETENTION_DAYS ?? '30'),
     dryRun: booleanFromEnvironment(environment.DRY_RUN),
+    idleTimeoutSeconds: idleTimeoutFromEnvironment(environment.IDLE_TIMEOUT_SECONDS),
   };
 }

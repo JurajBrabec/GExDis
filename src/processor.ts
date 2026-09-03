@@ -198,8 +198,8 @@ export async function processDownloads(
   captures: Record<string, string>,
   config: ProcessorConfig,
   logger: Logger,
+  actions: ActionResult[] = [],
 ): Promise<ActionResult[]> {
-  const actions: ActionResult[] = [];
   await mkdir(config.tempDir, { recursive: true });
 
   for (const link of links) {

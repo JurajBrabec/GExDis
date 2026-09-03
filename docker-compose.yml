@@ -14,6 +14,7 @@ services:
       BIN_DIR: /app/bin
       LOG_DIR: /app/log
       LOG_RETENTION_DAYS: 30
+      IDLE_TIMEOUT_SECONDS: 60
     volumes:
       - ./app/config:/app/config:ro
       - ./app/tmp:/app/tmp

@@ -4,6 +4,7 @@ import { fetchAllowed } from './http-client.ts';
 import { processDownloads } from './processor.ts';
 import { loadRules } from './rules.ts';
 import { defaultRules, isAllowedUrl, selectVariant } from './variants.ts';
+import { JobStore } from './jobs.ts';
 
 const config = loadConfig();
 const logger = new Logger(
@@ -11,6 +12,7 @@ const logger = new Logger(
   config.logLevel,
   config.logRetentionDays,
 );
+const jobs = new JobStore();
 await loadRules(config.rulesFile, defaultRules);
 await logger.info('Rules loaded', { rulesFile: config.rulesFile });
 
@@ -21,12 +23,24 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+async function handleStatus(id: string): Promise<Response> {
+  const job = jobs.get(id);
+  if (!job) {
+    return json({ error: 'Job not found' }, 404);
+  }
+  return json(job);
+}
+
 export async function handleRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
   await logger.info('Request received', {
     method: request.method,
     path: url.pathname,
   });
+
+  if (url.pathname.startsWith('/status/')) {
+    return handleStatus(url.pathname.slice('/status/'.length));
+  }
 
   if (url.pathname !== '/process') {
     await logger.warn('Request path not found', { path: url.pathname });
@@ -140,19 +154,34 @@ export async function handleRequest(request: Request): Promise<Response> {
       return json(actions);
     }
 
-    const actions = await processDownloads(
-      selected.variant,
-      selected.rule,
-      downloads,
-      captures,
-      config,
-      logger,
+    const job = jobs.create(selected.variant.name, source);
+    void (async () => {
+      try {
+        await processDownloads(
+          selected.variant,
+          selected.rule,
+          downloads,
+          captures,
+          config,
+          logger,
+          job.actions,
+        );
+        jobs.complete(job.id);
+        await logger.info('Request completed', {
+          variant: selected.variant.name,
+          count: job.actions.length,
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Unknown error';
+        jobs.fail(job.id, message);
+        await logger.error('Request processing failed', { error: message });
+      }
+    })();
+    return json(
+      { id: job.id, status: job.status, statusUrl: `/status/${job.id}` },
+      202,
     );
-    await logger.info('Request completed', {
-      variant: selected.variant.name,
-      count: actions.length,
-    });
-    return json(actions);
   } catch (error) {
     await logger.error('Request processing failed', {
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -170,6 +199,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 export const server = Bun.serve({
   hostname: config.host,
   port: config.port,
+  idleTimeout: config.idleTimeoutSeconds,
   fetch: handleRequest,
 });
 

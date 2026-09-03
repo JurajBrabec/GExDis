@@ -10,6 +10,28 @@ afterEach(async () => {
   cleanup = undefined;
 });
 
+interface JobResponse {
+  id: string;
+  status: 'running' | 'completed' | 'failed';
+  actions: Array<{ status: string }>;
+  error?: string;
+}
+
+async function pollJob(
+  handleRequest: (request: Request) => Promise<Response>,
+  statusUrl: string,
+): Promise<JobResponse> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await handleRequest(
+      new Request(new URL(statusUrl, 'http://localhost')),
+    );
+    const job = (await response.json()) as JobResponse;
+    if (job.status !== 'running') return job;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('Job did not complete in time');
+}
+
 test('processes a GitHub URL through the HTTP handler end to end', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gexdis-http-'));
   const appDir = join(directory, 'app');
@@ -77,9 +99,11 @@ test('processes a GitHub URL through the HTTP handler end to end', async () => {
 
   requestUrl.searchParams.delete('dry_run');
   const response = await handleRequest(new Request(requestUrl));
-  const actions = (await response.json()) as Array<{ status: string }>;
-  expect(response.status).toBe(200);
-  expect(actions.map((action) => action.status)).toEqual([
+  expect(response.status).toBe(202);
+  const { statusUrl } = (await response.json()) as { statusUrl: string };
+  const job = await pollJob(handleRequest, statusUrl);
+  expect(job.status).toBe('completed');
+  expect(job.actions.map((action) => action.status)).toEqual([
     'downloaded',
     'copied',
   ]);
@@ -151,9 +175,11 @@ test('resolves a /releases/latest redirect before applying the expanded_assets p
     'https://github.com/acme/tool/releases/latest',
   );
   const response = await handleRequest(new Request(requestUrl));
-  const actions = (await response.json()) as Array<{ status: string }>;
-  expect(response.status).toBe(200);
-  expect(actions.map((action) => action.status)).toEqual([
+  expect(response.status).toBe(202);
+  const { statusUrl } = (await response.json()) as { statusUrl: string };
+  const job = await pollJob(handleRequest, statusUrl);
+  expect(job.status).toBe('completed');
+  expect(job.actions.map((action) => action.status)).toEqual([
     'downloaded',
     'copied',
   ]);
