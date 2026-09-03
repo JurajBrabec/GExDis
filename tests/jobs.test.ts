@@ -9,7 +9,11 @@ test('creates a running job with a shared, mutable actions array', () => {
   expect(job.actions).toEqual([]);
   expect(store.get(job.id)).toBe(job);
 
-  job.actions.push({ variant: 'github', url: 'https://x', status: 'downloaded' });
+  job.actions.push({
+    variant: 'github',
+    url: 'https://x',
+    status: 'downloaded',
+  });
   expect(store.get(job.id)?.actions).toHaveLength(1);
 });
 

@@ -46,6 +46,8 @@ export function loadConfig(environment = process.env): AppConfig {
     logLevel: environment.LOG_LEVEL ?? 'info',
     logRetentionDays: Number(environment.LOG_RETENTION_DAYS ?? '30'),
     dryRun: booleanFromEnvironment(environment.DRY_RUN),
-    idleTimeoutSeconds: idleTimeoutFromEnvironment(environment.IDLE_TIMEOUT_SECONDS),
+    idleTimeoutSeconds: idleTimeoutFromEnvironment(
+      environment.IDLE_TIMEOUT_SECONDS,
+    ),
   };
 }
