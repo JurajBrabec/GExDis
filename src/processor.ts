@@ -26,6 +26,10 @@ export interface ActionResult {
   // Set on 'removed' actions that partially failed: how many matched paths
   // could not be removed.
   failed?: number;
+  // Set on 'unpacked' actions: how many file entries were extracted.
+  unpacked?: number;
+  // Set on 'copied' actions: total items copied by that rule across the run.
+  copied?: number;
 }
 
 interface ProcessorConfig {
@@ -38,10 +42,17 @@ interface CopyRuleTracker {
   invalid: Set<string>;
   resolved: Set<string>;
   matched: Set<string>;
+  // Running total of items copied per copy rule, across links/archives.
+  copied: Map<string, number>;
 }
 
 function createCopyRuleTracker(): CopyRuleTracker {
-  return { invalid: new Set(), resolved: new Set(), matched: new Set() };
+  return {
+    invalid: new Set(),
+    resolved: new Set(),
+    matched: new Set(),
+    copied: new Map(),
+  };
 }
 
 // Tracks, per link, which raw remove-rule strings were invalid, resolvable, or
@@ -418,7 +429,9 @@ async function copyMatching(
           path: destinationPath,
           rule: copyRule,
           captures,
+          copied: (tracker.copied.get(copyRule) ?? 0) + 1,
         });
+        tracker.copied.set(copyRule, (tracker.copied.get(copyRule) ?? 0) + 1);
         await logger.info('File copied', {
           variant: variant.name,
           url: link.url,
@@ -601,12 +614,16 @@ async function unpackNested(
       relative(root, extracted.root).replaceAll('\\', '/'),
     );
     nestedCaptures.UNPACKED = unpacked;
+    const fileCount = extracted.entries.filter(
+      (entry) => !entry.directory,
+    ).length;
     actions.push({
       variant: variant.name,
       url: link.url,
       status: 'unpacked',
       path: unpacked,
       captures: nestedCaptures,
+      unpacked: fileCount,
     });
     await logger.info('Nested archive unpacked', {
       variant: variant.name,
@@ -721,12 +738,16 @@ export async function processDownloads(
           relative(config.tempDir, extracted.root).replaceAll('\\', '/'),
         );
         if (unpacked) fileCaptures.UNPACKED = unpacked;
+        const fileCount = extracted.entries.filter(
+          (entry) => !entry.directory,
+        ).length;
         actions.push({
           variant: variant.name,
           url: link.url,
           status: 'unpacked',
           path: unpacked,
           captures: fileCaptures,
+          unpacked: fileCount,
         });
         await logger.info('Archive unpacked', {
           variant: variant.name,

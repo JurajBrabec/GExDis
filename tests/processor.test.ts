@@ -98,6 +98,8 @@ test('copies a single file to every matching copy rule destination', async () =>
     'copied',
     'copied',
   ]);
+  expect(actions[1].copied).toBe(1);
+  expect(actions[2].copied).toBe(1);
   expect(await readFile(join(appDir, 'download', 'tool.exe'), 'utf8')).toBe(
     'binary',
   );
@@ -325,6 +327,7 @@ test('copies a file extracted from a flattened single root folder', async () => 
     'unpacked',
     'copied',
   ]);
+  expect(actions.find((a) => a.status === 'unpacked')?.unpacked).toBe(1);
   expect(
     await readFile(join(directory, 'app', 'release', 'tool.exe'), 'utf8'),
   ).toBe('binary');
