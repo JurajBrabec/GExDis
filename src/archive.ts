@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { BlobReader, Uint8ArrayWriter, ZipReader } from '@zip.js/zip.js';
 import { createExtractorFromData } from 'node-unrar-js';
 
@@ -147,10 +147,8 @@ export async function extractArchive(
           continue;
         }
         const target = resolve(root, relativePath);
-        if (
-          !target.startsWith(resolve(root) + '\\') &&
-          target !== resolve(root)
-        )
+        const rootDir = resolve(root) + sep;
+        if (!target.startsWith(rootDir) && target !== resolve(root))
           throw new Error(`Unsafe archive entry: ${entry.filename}`);
         await mkdir(dirname(target), { recursive: true });
         await writeFile(target, await entry.getData(new Uint8ArrayWriter()));

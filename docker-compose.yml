@@ -2,19 +2,23 @@ services:
   gexdis:
     build:
       context: .
+    container_name: gexdis
+    environment:
+      # BIN_DIR: /app/bin
+      # CONFIG_DIR: /app/config
+      # DOWNLOAD_DIR: /app/download
+      HOST: 0.0.0.0
+      # IDLE_TIMEOUT_SECONDS: 60
+      # LOG_DIR: /app/log
+      # LOG_RETENTION_DAYS: 30
+      # PORT: 3000
+      # RELEASE_DIR: /app/release
+      # TMP_DIR: /app/tmp
+    image: jurajbrabec/gexdis:latest
     ports:
       - "3000:3000"
-    environment:
-      HOST: 0.0.0.0
-      PORT: 3000
-      CONFIG_DIR: /app/config
-      TMP_DIR: /app/tmp
-      DOWNLOAD_DIR: /app/download
-      RELEASE_DIR: /app/release
-      BIN_DIR: /app/bin
-      LOG_DIR: /app/log
-      LOG_RETENTION_DAYS: 30
-      IDLE_TIMEOUT_SECONDS: 60
+    restart: unless-stopped
+    user: "${UID}:${GID}"
     volumes:
       - ./app/config:/app/config:ro
       - ./app/tmp:/app/tmp
