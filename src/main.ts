@@ -2,7 +2,7 @@ import { loadConfig } from './config.ts';
 import { Logger } from './logger.ts';
 import { fetchAllowed } from './http-client.ts';
 import { processDownloads } from './processor.ts';
-import { loadRules } from './rules.ts';
+import { loadRules, expandPlaceholders, matchRule } from './rules.ts';
 import { defaultRules, isAllowedUrl, selectVariant } from './variants.ts';
 import { JobStore } from './jobs.ts';
 
@@ -122,6 +122,15 @@ export async function handleRequest(request: Request): Promise<Response> {
       captures,
       selected.rule,
     );
+    // A get pattern that matches no asset is a requested action that will never
+    // run; surface it as a failed action instead of silently omitting it.
+    const unmatchedGetPatterns = selected.rule.get.filter((pattern) => {
+      const expanded = expandPlaceholders(pattern, captures);
+      return (
+        expanded !== undefined &&
+        !links.some((link) => matchRule(expanded, link.url).matched)
+      );
+    });
     if (downloads.length === 0) {
       await logger.info('No actionable links found', {
         variant: selected.variant.name,
@@ -156,6 +165,19 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
 
     const job = jobs.create(selected.variant.name, source);
+    for (const pattern of unmatchedGetPatterns) {
+      job.actions.push({
+        variant: selected.variant.name,
+        url: source,
+        status: 'failed',
+        error: `No asset matched get pattern: "${pattern}"`,
+        captures,
+      });
+      await logger.warn('Get pattern matched no assets', {
+        variant: selected.variant.name,
+        pattern,
+      });
+    }
     void (async () => {
       try {
         await processDownloads(

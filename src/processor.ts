@@ -39,6 +39,74 @@ function createCopyRuleTracker(): CopyRuleTracker {
   return { invalid: new Set(), resolved: new Set(), matched: new Set() };
 }
 
+// Unpack rules that never matched any archive are requested actions that can
+// never run; report them instead of silently skipping.
+function reportUnmatchedUnpackRules(
+  variant: Variant,
+  rule: RuleSet,
+  captures: Record<string, string>,
+  matched: Set<string>,
+  actions: ActionResult[],
+  logger: Logger,
+): void {
+  if (!rule.unpack) return;
+  for (const unpackRule of rule.unpack) {
+    if (matched.has(unpackRule)) continue;
+    actions.push({
+      variant: variant.name,
+      url: '',
+      status: 'failed',
+      error: `No archive matched unpack rule: "${unpackRule}"`,
+      captures,
+    });
+    void logger.warn('Unpack rule matched no archives', {
+      variant: variant.name,
+      rule: unpackRule,
+    });
+  }
+}
+
+// Copy rules whose placeholders are unresolved (e.g. '{UNPACKED}' when nothing
+// was unpacked) are requested actions that can never run; report them once per
+// link instead of silently skipping.
+function reportUnresolvedCopyRules(
+  variant: Variant,
+  link: PageLink,
+  rule: RuleSet,
+  captures: Record<string, string>,
+  tracker: CopyRuleTracker,
+  actions: ActionResult[],
+  logger: Logger,
+): void {
+  for (const copyRule of rule.copy) {
+    const parsed = parseCopyRule(copyRule);
+    if (
+      !parsed ||
+      tracker.invalid.has(copyRule) ||
+      tracker.resolved.has(copyRule)
+    ) {
+      continue;
+    }
+    const sourcePattern = expandPlaceholders(parsed.source, captures);
+    const destination = expandPlaceholders(parsed.target, captures);
+    if (sourcePattern === undefined || destination === undefined) {
+      tracker.invalid.add(copyRule);
+      actions.push({
+        variant: variant.name,
+        url: link.url,
+        status: 'failed',
+        error: `Copy rule placeholders could not be resolved: "${copyRule}"`,
+        captures,
+      });
+      void logger.warn('Copy rule placeholders unresolved', {
+        variant: variant.name,
+        url: link.url,
+        rule: copyRule,
+      });
+    }
+  }
+}
+
 function reportUnmatchedCopyRules(
   variant: Variant,
   link: PageLink,
@@ -285,6 +353,7 @@ async function unpackNested(
   actions: ActionResult[],
   logger: Logger,
   tracker: CopyRuleTracker,
+  matchedUnpackRules: Set<string>,
 ): Promise<void> {
   if (!rule.unpack) return;
   const nestedArchives = (await filesUnder(root)).filter((path) =>
@@ -296,7 +365,14 @@ async function unpackNested(
       ...captures,
       DOWNLOADED: basename(archivePath),
     };
-    if (!matchAnyRule(rule.unpack, candidate, nestedCaptures)) continue;
+    const matchedRule = rule.unpack.find(
+      (unpackRule) =>
+        expandPlaceholders(unpackRule, nestedCaptures) !== undefined &&
+        matchRule(expandPlaceholders(unpackRule, nestedCaptures)!, candidate)
+          .matched,
+    );
+    if (!matchedRule) continue;
+    matchedUnpackRules.add(matchedRule);
     const nestedRoot = `${archivePath}-contents`;
     const extracted = await extractArchive(archivePath, nestedRoot);
     const unpacked = stripUuidPrefix(
@@ -340,6 +416,7 @@ async function unpackNested(
       actions,
       logger,
       tracker,
+      matchedUnpackRules,
     );
   }
 }
@@ -355,6 +432,11 @@ export async function processDownloads(
 ): Promise<ActionResult[]> {
   await mkdir(config.tempDir, { recursive: true });
 
+  // Copy rules are tracked across the whole run: a rule may only resolve or
+  // match for one of several downloaded links (e.g. '{UNPACKED}' rules for the
+  // zip link), so per-link tracking would produce false failures.
+  const copyRuleTracker = createCopyRuleTracker();
+  const matchedUnpackRules = new Set<string>();
   for (const link of links) {
     const name = safeName(link);
     const temporaryPath = join(
@@ -362,7 +444,6 @@ export async function processDownloads(
       `${crypto.randomUUID()}-${name}`,
     );
     const itemRoot = `${temporaryPath}-contents`;
-    const copyRuleTracker = createCopyRuleTracker();
     const fileCaptures: Record<string, string> = { ...link.captures };
     try {
       if (!isAllowedUrl(link.url)) {
@@ -387,11 +468,17 @@ export async function processDownloads(
         file: name,
       });
 
-      if (
-        isArchive(name) &&
+      const matchedUnpackRule =
         rule.unpack &&
-        matchAnyRule(rule.unpack, name, fileCaptures)
-      ) {
+        isArchive(name) &&
+        rule.unpack.find(
+          (unpackRule) =>
+            expandPlaceholders(unpackRule, fileCaptures) !== undefined &&
+            matchRule(expandPlaceholders(unpackRule, fileCaptures)!, name)
+              .matched,
+        );
+      if (isArchive(name) && rule.unpack && matchedUnpackRule) {
+        matchedUnpackRules.add(matchedUnpackRule);
         const extracted = await extractArchive(temporaryPath, itemRoot);
         const unpacked = stripUuidPrefix(
           relative(config.tempDir, extracted.root).replaceAll('\\', '/'),
@@ -433,6 +520,7 @@ export async function processDownloads(
           actions,
           logger,
           copyRuleTracker,
+          matchedUnpackRules,
         );
       }
       await copyMatching(
@@ -482,5 +570,22 @@ export async function processDownloads(
       });
     }
   }
+  reportUnresolvedCopyRules(
+    variant,
+    { url: '', path: '' },
+    rule,
+    captures,
+    copyRuleTracker,
+    actions,
+    logger,
+  );
+  reportUnmatchedUnpackRules(
+    variant,
+    rule,
+    captures,
+    matchedUnpackRules,
+    actions,
+    logger,
+  );
   return actions;
 }

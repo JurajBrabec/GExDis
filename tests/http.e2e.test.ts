@@ -106,6 +106,7 @@ test('processes a GitHub URL through the HTTP handler end to end', async () => {
   expect(job.actions.map((action) => action.status)).toEqual([
     'downloaded',
     'copied',
+    'failed',
   ]);
   expect(await readFile(join(appDir, 'bin', 'tool.exe'), 'utf8')).toBe(
     'binary',
@@ -182,6 +183,7 @@ test('resolves a /releases/latest redirect before applying the expanded_assets p
   expect(job.actions.map((action) => action.status)).toEqual([
     'downloaded',
     'copied',
+    'failed',
   ]);
   // TAG (v2) is only known after the /releases/latest redirect resolves, confirming it was recaptured.
   expect(await readFile(join(appDir, 'bin', 'v2', 'tool.exe'), 'utf8')).toBe(
