@@ -92,4 +92,22 @@ describe('rules', () => {
       'Variant github contains duplicate url rules',
     );
   });
+
+  test('preserves remove rules through loadRules', async () => {
+    const directory = await mkdtemp(`${tmpdir()}/gexdis-rules-`);
+    temporaryDirectories.push(directory);
+    const filePath = `${directory}/rules.yml`;
+    await Bun.write(
+      filePath,
+      'variants:\n  github:\n    - url: "^https://example\\\\.com/.+$"\n      get: []\n      copy: []\n      remove:\n        - \'^/app/bin/{EXE_NAME}-v[0-9]+\\.exe$\'\n',
+    );
+    const loaded = await loadRules(filePath, defaultRules);
+    expect(loaded.github[0].remove).toEqual([
+      '^/app/bin/{EXE_NAME}-v[0-9]+\\.exe$',
+    ]);
+    // Falls back to defaults when remove is omitted; the github default has no
+    // remove rules, so it becomes undefined.
+    const written = await loadRules(`${directory}/omitted.yml`, defaultRules);
+    expect(written.github[0].remove).toBeUndefined();
+  });
 });

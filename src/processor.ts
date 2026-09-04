@@ -16,11 +16,16 @@ import { fetchAllowed } from './http-client.ts';
 export interface ActionResult {
   variant: string;
   url: string;
-  status: 'downloaded' | 'unpacked' | 'copied' | 'failed';
+  status: 'downloaded' | 'unpacked' | 'copied' | 'removed' | 'failed';
   path?: string;
   error?: string;
   rule?: string;
   captures: Record<string, string>;
+  // Set on 'removed' actions: how many on-disk paths were removed.
+  removed?: number;
+  // Set on 'removed' actions that partially failed: how many matched paths
+  // could not be removed.
+  failed?: number;
 }
 
 interface ProcessorConfig {
@@ -36,6 +41,18 @@ interface CopyRuleTracker {
 }
 
 function createCopyRuleTracker(): CopyRuleTracker {
+  return { invalid: new Set(), resolved: new Set(), matched: new Set() };
+}
+
+// Tracks, per link, which raw remove-rule strings were invalid, resolvable, or
+// actually matched a file. Same shape as CopyRuleTracker.
+interface RemoveRuleTracker {
+  invalid: Set<string>;
+  resolved: Set<string>;
+  matched: Set<string>;
+}
+
+function createRemoveRuleTracker(): RemoveRuleTracker {
   return { invalid: new Set(), resolved: new Set(), matched: new Set() };
 }
 
@@ -144,6 +161,79 @@ function safeName(link: PageLink): string {
   return name && name !== '.' && name !== '..' ? name : 'download';
 }
 
+// Remove rules whose placeholders are unresolved (e.g. '{EXE_NAME}' when the
+// capture is missing) are requested actions that can never run; report them
+// once per link instead of silently skipping.
+async function reportUnresolvedRemoveRules(
+  variant: Variant,
+  link: PageLink,
+  rule: RuleSet,
+  captures: Record<string, string>,
+  tracker: RemoveRuleTracker,
+  actions: ActionResult[],
+  logger: Logger,
+): Promise<void> {
+  if (!rule.remove) return;
+  for (const removeRule of rule.remove) {
+    if (
+      tracker.invalid.has(removeRule) ||
+      tracker.resolved.has(removeRule) ||
+      tracker.matched.has(removeRule)
+    ) {
+      continue;
+    }
+    const pattern = expandPlaceholders(removeRule, captures);
+    if (pattern === undefined) {
+      tracker.invalid.add(removeRule);
+      actions.push({
+        variant: variant.name,
+        url: link.url,
+        status: 'failed',
+        error: `Remove rule placeholders could not be resolved: "${removeRule}"`,
+        captures,
+      });
+      await logger.warn('Remove rule placeholders unresolved', {
+        variant: variant.name,
+        url: link.url,
+        rule: removeRule,
+      });
+    }
+  }
+}
+
+function reportUnmatchedRemoveRules(
+  variant: Variant,
+  link: PageLink,
+  rule: RuleSet,
+  captures: Record<string, string>,
+  tracker: RemoveRuleTracker,
+  actions: ActionResult[],
+  logger: Logger,
+): Promise<void[]> {
+  if (!rule.remove) return Promise.resolve([]);
+  return Promise.all(
+    rule.remove
+      .filter(
+        (removeRule) =>
+          tracker.resolved.has(removeRule) && !tracker.matched.has(removeRule),
+      )
+      .map(async (removeRule) => {
+        actions.push({
+          variant: variant.name,
+          url: link.url,
+          status: 'failed',
+          error: `No file matched remove rule: "${removeRule}"`,
+          captures,
+        });
+        await logger.warn('Remove rule matched no files', {
+          variant: variant.name,
+          url: link.url,
+          rule: removeRule,
+        });
+      }),
+  );
+}
+
 // Temporary download artifacts are prefixed with a UUID on disk; captures such
 // as {DOWNLOADED} and {UNPACKED} expose the clean names instead.
 const UUID_PREFIX =
@@ -193,6 +283,23 @@ async function pathsUnder(root: string): Promise<string[]> {
     if (entry.isDirectory()) paths.push(...(await pathsUnder(path)));
   }
   return paths;
+}
+
+// A remove rule must match only files within a single /app/{subdir}/ folder so
+// one remove action cannot reach outside its intended directory (or the app
+// root itself). A leading '^' anchor is allowed, as in copy rules. Returns
+// undefined when the path escapes that folder.
+function resolveRemoveScope(
+  pattern: string,
+  appDir: string,
+): { root: string; subdir: string } | undefined {
+  const match = /^\^?\/app\/([^/]+)\//.exec(pattern);
+  if (!match) return undefined;
+  const subdir = match[1];
+  return {
+    root: resolve(join(appDir, subdir)),
+    subdir,
+  };
 }
 
 async function copyMatching(
@@ -343,6 +450,121 @@ async function copyMatching(
   }
 }
 
+async function removeMatching(
+  variant: Variant,
+  link: PageLink,
+  rule: RuleSet,
+  captures: Record<string, string>,
+  appDir: string,
+  actions: ActionResult[],
+  logger: Logger,
+  tracker: RemoveRuleTracker,
+): Promise<void> {
+  if (!rule.remove) return;
+  for (const removeRule of rule.remove) {
+    if (tracker.invalid.has(removeRule) || tracker.matched.has(removeRule)) {
+      continue;
+    }
+    const pattern = expandPlaceholders(removeRule, captures);
+    if (pattern === undefined) {
+      continue;
+    }
+    // A remove rule must stay within one /app/{subdir}/ folder.
+    const scope = resolveRemoveScope(pattern, appDir);
+    if (!scope) {
+      tracker.invalid.add(removeRule);
+      actions.push({
+        variant: variant.name,
+        url: link.url,
+        status: 'failed',
+        error: `Invalid remove rule: must target a single /app/{subdir}/ folder: "${removeRule}"`,
+        captures,
+      });
+      await logger.error('Invalid remove rule scope', {
+        variant: variant.name,
+        url: link.url,
+        rule: removeRule,
+      });
+      continue;
+    }
+    tracker.resolved.add(removeRule);
+    // Candidates are matched as virtual '/app/...' paths (the same notation
+    // used in rules) relative to appDir, so rules work identically on any host.
+    let candidates: string[];
+    try {
+      candidates = await pathsUnder(scope.root);
+    } catch (error) {
+      // The subdir does not exist yet; nothing to remove.
+      if (
+        !(
+          error instanceof Error &&
+          (error as NodeJS.ErrnoException).code === 'ENOENT'
+        )
+      ) {
+        throw error;
+      }
+      candidates = [];
+    }
+    const matches = candidates
+      .map((path) => `/app/${relative(appDir, path).replaceAll('\\', '/')}`)
+      .filter((path) => new RegExp(`^(?:${pattern})$`, 'i').test(path));
+    if (matches.length === 0) continue;
+    tracker.matched.add(removeRule);
+
+    let removed = 0;
+    let failed = 0;
+    let firstError: string | undefined;
+    for (const path of matches) {
+      // Map the virtual '/app/...' match back to the real on-disk path.
+      const realPath = join(appDir, path.slice('/app/'.length));
+      try {
+        await rm(realPath, { recursive: true, force: true });
+        removed++;
+      } catch (error) {
+        failed++;
+        firstError ??= error instanceof Error ? error.message : 'Remove failed';
+      }
+    }
+    if (failed > 0) {
+      actions.push({
+        variant: variant.name,
+        url: link.url,
+        status: 'removed',
+        path: scope.subdir,
+        rule: removeRule,
+        captures,
+        removed,
+        failed,
+        error: firstError,
+      });
+      await logger.warn('Remove partially failed', {
+        variant: variant.name,
+        url: link.url,
+        rule: removeRule,
+        removed,
+        failed,
+        error: firstError,
+      });
+      continue;
+    }
+    actions.push({
+      variant: variant.name,
+      url: link.url,
+      status: 'removed',
+      path: scope.subdir,
+      rule: removeRule,
+      captures,
+      removed,
+    });
+    await logger.info('Remove rule applied', {
+      variant: variant.name,
+      url: link.url,
+      rule: removeRule,
+      removed,
+    });
+  }
+}
+
 async function unpackNested(
   variant: Variant,
   link: DownloadLink,
@@ -436,6 +658,7 @@ export async function processDownloads(
   // match for one of several downloaded links (e.g. '{UNPACKED}' rules for the
   // zip link), so per-link tracking would produce false failures.
   const copyRuleTracker = createCopyRuleTracker();
+  const removeRuleTracker = createRemoveRuleTracker();
   const matchedUnpackRules = new Set<string>();
   for (const link of links) {
     const name = safeName(link);
@@ -467,6 +690,20 @@ export async function processDownloads(
         url: link.url,
         file: name,
       });
+
+      // Remove rules run once per link, before any copy, so they clean up
+      // pre-existing files (e.g. older versions) without touching files that
+      // the current run just copied.
+      await removeMatching(
+        variant,
+        link,
+        rule,
+        fileCaptures,
+        config.appDir,
+        actions,
+        logger,
+        removeRuleTracker,
+      );
 
       const matchedUnpackRule =
         rule.unpack &&
@@ -546,6 +783,15 @@ export async function processDownloads(
         actions,
         logger,
       );
+      await reportUnmatchedRemoveRules(
+        variant,
+        link,
+        rule,
+        fileCaptures,
+        removeRuleTracker,
+        actions,
+        logger,
+      );
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Processing failed';
@@ -576,6 +822,15 @@ export async function processDownloads(
     rule,
     captures,
     copyRuleTracker,
+    actions,
+    logger,
+  );
+  await reportUnresolvedRemoveRules(
+    variant,
+    { url: '', path: '' },
+    rule,
+    captures,
+    removeRuleTracker,
     actions,
     logger,
   );

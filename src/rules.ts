@@ -8,6 +8,7 @@ export interface RuleSet {
   get: string[];
   unpack?: string[];
   copy: string[];
+  remove?: string[];
 }
 
 export function deriveNameFromUrl(pattern: string): string {
@@ -129,6 +130,8 @@ export async function loadRules(
                 unpack:
                   rule.unpack ?? defaults[index]?.unpack ?? defaults[0].unpack,
                 copy: rule.copy ?? defaults[index]?.copy ?? defaults[0].copy,
+                remove:
+                  rule.remove ?? defaults[index]?.remove ?? defaults[0].remove,
               };
             })
           : defaults;
