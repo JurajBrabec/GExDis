@@ -38,19 +38,39 @@ function archiveBaseName(fileName: string): string {
   return basename(fileName).replace(/\.(tar\.gz|tgz|tar|zip|rar)$/i, '');
 }
 
-function smartRoot(
+// Detects the "PeaZip smart extract" case: exactly one root folder and no root files/other root folders.
+function singleRootFolder(entries: ExtractedEntry[]): string | undefined {
+  const rootFiles = new Set<string>();
+  const rootFolders = new Set<string>();
+  for (const entry of entries) {
+    const [first, ...rest] = entry.relativePath.split('/');
+    if (!first) continue;
+    if (rest.length > 0 || entry.directory) rootFolders.add(first);
+    else rootFiles.add(first);
+  }
+  return rootFiles.size === 0 && rootFolders.size === 1
+    ? [...rootFolders][0]
+    : undefined;
+}
+
+function resolveExtractionRoot(
   fileName: string,
   entries: ExtractedEntry[],
   output: string,
-): string {
-  const roots = new Set(
-    entries.map((entry) => entry.relativePath.split('/')[0]).filter(Boolean),
-  );
-  const hasRootFile = entries.some(
-    (entry) => !entry.relativePath.includes('/'),
-  );
-  if (!hasRootFile && roots.size === 1) return output;
-  return join(output, archiveBaseName(fileName));
+): { root: string; rootFolder?: string } {
+  const rootFolder = singleRootFolder(entries);
+  return rootFolder
+    ? { root: output, rootFolder }
+    : { root: join(output, archiveBaseName(fileName)) };
+}
+
+// Strips the sole root folder's name so its contents land directly in the extraction root.
+function stripRootFolder(relativePath: string, rootFolder?: string): string {
+  if (!rootFolder) return relativePath;
+  const segments = relativePath.split('/');
+  return segments[0] === rootFolder
+    ? segments.slice(1).join('/')
+    : relativePath;
 }
 
 export async function extractArchive(
@@ -110,14 +130,18 @@ export async function extractArchive(
     }
   }
 
-  const root = smartRoot(filePath, listed, output);
+  const { root, rootFolder } = resolveExtractionRoot(filePath, listed, output);
   await mkdir(root, { recursive: true });
 
   if (kind === 'zip') {
     const reader = new ZipReader(new BlobReader(new Blob([bytes])));
     try {
       for (const entry of await reader.getEntries()) {
-        const relativePath = validateEntry(entry.filename);
+        const relativePath = stripRootFolder(
+          validateEntry(entry.filename),
+          rootFolder,
+        );
+        if (!relativePath) continue;
         if (entry.directory) {
           await mkdir(join(root, relativePath), { recursive: true });
           continue;
@@ -135,7 +159,16 @@ export async function extractArchive(
       await reader.close();
     }
   } else if (kind === 'tar') {
-    await new Bun.Archive(bytes).extract(root);
+    for (const [entryPath, file] of await new Bun.Archive(bytes).files()) {
+      const relativePath = stripRootFolder(
+        validateEntry(entryPath),
+        rootFolder,
+      );
+      if (!relativePath) continue;
+      const target = resolve(root, relativePath);
+      await mkdir(dirname(target), { recursive: true });
+      await Bun.write(target, file);
+    }
   } else {
     const wasmPath = join(
       process.cwd(),
@@ -148,7 +181,11 @@ export async function extractArchive(
     for (const entry of extractor.extract().files) {
       if (entry.fileHeader.flags.encrypted)
         throw new Error('Password-protected archives are not supported');
-      const relativePath = validateEntry(entry.fileHeader.name);
+      const relativePath = stripRootFolder(
+        validateEntry(entry.fileHeader.name),
+        rootFolder,
+      );
+      if (!relativePath) continue;
       if (entry.fileHeader.flags.directory) {
         await mkdir(join(root, relativePath), { recursive: true });
         continue;
@@ -161,10 +198,14 @@ export async function extractArchive(
 
   return {
     root,
-    entries: listed.map((entry) => ({
-      ...entry,
-      path: join(root, entry.relativePath),
-    })),
+    entries: listed
+      .map((entry) => {
+        const relativePath = stripRootFolder(entry.relativePath, rootFolder);
+        return relativePath
+          ? { ...entry, relativePath, path: join(root, relativePath) }
+          : undefined;
+      })
+      .filter((entry): entry is ExtractedEntry => entry !== undefined),
   };
 }
 

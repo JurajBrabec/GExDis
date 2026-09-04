@@ -13,6 +13,7 @@ test('creates a running job with a shared, mutable actions array', () => {
     variant: 'github',
     url: 'https://x',
     status: 'downloaded',
+    captures: {},
   });
   expect(store.get(job.id)?.actions).toHaveLength(1);
 });

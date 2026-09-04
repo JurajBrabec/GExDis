@@ -137,6 +137,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         variant: selected.variant.name,
         url: link.url,
         status: 'planned',
+        captures: link.captures,
       }));
       await Promise.all(
         actions.map((action) =>

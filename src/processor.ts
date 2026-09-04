@@ -19,6 +19,7 @@ export interface ActionResult {
   status: 'downloaded' | 'unpacked' | 'copied' | 'failed';
   path?: string;
   error?: string;
+  captures: Record<string, string>;
 }
 
 interface ProcessorConfig {
@@ -41,6 +42,7 @@ function reportUnmatchedCopyRules(
   variant: Variant,
   link: PageLink,
   rule: RuleSet,
+  captures: Record<string, string>,
   tracker: CopyRuleTracker,
   actions: ActionResult[],
   logger: Logger,
@@ -57,6 +59,7 @@ function reportUnmatchedCopyRules(
           url: link.url,
           status: 'failed',
           error: `No file matched copy rule: "${copyRule}"`,
+          captures,
         });
         await logger.warn('Copy rule matched no files', {
           variant: variant.name,
@@ -133,6 +136,7 @@ async function copyMatching(
             url: link.url,
             status: 'failed',
             error: `Invalid copy rule format: "${copyRule}"`,
+            captures,
           });
           await logger.error('Invalid copy rule format', {
             variant: variant.name,
@@ -180,6 +184,7 @@ async function copyMatching(
           url: link.url,
           status: 'copied',
           path: destinationPath,
+          captures,
         });
         await logger.info('File copied', {
           variant: variant.name,
@@ -195,6 +200,7 @@ async function copyMatching(
           status: 'failed',
           path: destinationPath,
           error: message,
+          captures,
         });
         await logger.error('File copy failed', {
           variant: variant.name,
@@ -239,6 +245,7 @@ async function unpackNested(
       url: link.url,
       status: 'unpacked',
       path: unpacked,
+      captures: nestedCaptures,
     });
     await logger.info('Nested archive unpacked', {
       variant: variant.name,
@@ -291,6 +298,7 @@ export async function processDownloads(
     );
     const itemRoot = `${temporaryPath}-contents`;
     const copyRuleTracker = createCopyRuleTracker();
+    const fileCaptures: Record<string, string> = { ...link.captures };
     try {
       if (!isAllowedUrl(link.url)) {
         throw new Error('Download host is not allowed');
@@ -300,11 +308,13 @@ export async function processDownloads(
         throw new Error(`Download returned HTTP ${response.status}`);
       }
       await Bun.write(temporaryPath, await response.arrayBuffer());
+      fileCaptures.DOWNLOADED = name;
       actions.push({
         variant: variant.name,
         url: link.url,
         status: 'downloaded',
         path: name,
+        captures: fileCaptures,
       });
       await logger.info('File downloaded', {
         variant: variant.name,
@@ -312,29 +322,23 @@ export async function processDownloads(
         file: name,
       });
 
-      const fileCaptures: Record<string, string> = { ...link.captures };
-      fileCaptures.DOWNLOADED = name;
       if (
         isArchive(name) &&
         rule.unpack &&
         matchAnyRule(rule.unpack, name, fileCaptures)
       ) {
         const extracted = await extractArchive(temporaryPath, itemRoot);
-        const roots = new Set(
-          extracted.entries
-            .map((entry) => entry.relativePath.split('/')[0])
-            .filter(Boolean),
+        const unpacked = relative(config.tempDir, extracted.root).replaceAll(
+          '\\',
+          '/',
         );
-        const unpacked =
-          relative(itemRoot, extracted.root).replaceAll('\\', '/') ||
-          [...roots][0] ||
-          '';
         if (unpacked) fileCaptures.UNPACKED = unpacked;
         actions.push({
           variant: variant.name,
           url: link.url,
           status: 'unpacked',
           path: relative(config.tempDir, extracted.root),
+          captures: fileCaptures,
         });
         await logger.info('Archive unpacked', {
           variant: variant.name,
@@ -382,6 +386,7 @@ export async function processDownloads(
         variant,
         link,
         rule,
+        fileCaptures,
         copyRuleTracker,
         actions,
         logger,
@@ -394,6 +399,7 @@ export async function processDownloads(
         url: link.url,
         status: 'failed',
         error: message,
+        captures: fileCaptures,
       });
       await logger.error('File processing failed', {
         variant: variant.name,

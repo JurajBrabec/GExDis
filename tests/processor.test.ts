@@ -261,7 +261,7 @@ test('reports a failed download and continues processing other links', async () 
   ]);
 });
 
-test('extracts a ZIP and copies matching extracted files', async () => {
+test('flattens a single root folder when extracting a ZIP', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
   temporaryDirectories.push(directory);
   const zipWriter = new ZipWriter(new BlobWriter('application/zip'));
@@ -276,14 +276,14 @@ test('extracts a ZIP and copies matching extracted files', async () => {
   );
   expect(extracted.root.endsWith('contents')).toBe(true);
   expect(extracted.entries.map((entry) => entry.relativePath)).toEqual([
-    'package/tool.exe',
+    'tool.exe',
   ]);
-  expect(
-    await Bun.file(join(extracted.root, 'package', 'tool.exe')).text(),
-  ).toBe('binary');
+  expect(await Bun.file(join(extracted.root, 'tool.exe')).text()).toBe(
+    'binary',
+  );
 });
 
-test('recursively copies an extracted directory when its path matches', async () => {
+test('copies a file extracted from a flattened single root folder', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
   temporaryDirectories.push(directory);
   const zipWriter = new ZipWriter(new BlobWriter('application/zip'));
@@ -305,7 +305,7 @@ test('recursively copies an extracted directory when its path matches', async ()
       url: 'url',
       get: ['\\.zip$'],
       unpack: ['^.+\\.zip$'],
-      copy: ['^package$:/app/release'],
+      copy: ['^tool\\.exe$:/app/release'],
     },
     [
       {
@@ -326,10 +326,7 @@ test('recursively copies an extracted directory when its path matches', async ()
     'copied',
   ]);
   expect(
-    await readFile(
-      join(directory, 'app', 'release', 'package', 'tool.exe'),
-      'utf8',
-    ),
+    await readFile(join(directory, 'app', 'release', 'tool.exe'), 'utf8'),
   ).toBe('binary');
 });
 
