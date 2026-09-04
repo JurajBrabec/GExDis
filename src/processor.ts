@@ -19,6 +19,7 @@ export interface ActionResult {
   status: 'downloaded' | 'unpacked' | 'copied' | 'failed';
   path?: string;
   error?: string;
+  rule?: string;
   captures: Record<string, string>;
 }
 
@@ -75,6 +76,29 @@ function safeName(link: PageLink): string {
   return name && name !== '.' && name !== '..' ? name : 'download';
 }
 
+// Temporary download artifacts are prefixed with a UUID on disk; captures such
+// as {DOWNLOADED} and {UNPACKED} expose the clean names instead.
+const UUID_PREFIX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i;
+
+function stripUuidPrefix(value: string): string {
+  return value.replace(UUID_PREFIX, '');
+}
+
+// Extracted folders and their contents are matched strictly (the pattern must
+// cover the whole candidate path), otherwise a folder like
+// 'tool-v1.0.zip-contents' would substring-match a '{DOWNLOADED}' rule for
+// 'tool-v1.0.zip' and be copied to the wrong destination. Directly downloaded
+// files keep the lenient substring behavior.
+function matchCandidate(
+  pattern: string,
+  candidate: string,
+  strict: boolean,
+): boolean {
+  if (!strict) return matchRule(pattern, candidate).matched;
+  return new RegExp(`^(?:${pattern})$`, 'i').test(candidate);
+}
+
 function targetPath(target: string, appDir: string): string {
   return target.startsWith('/app/')
     ? join(appDir, target.slice('/app/'.length))
@@ -115,17 +139,42 @@ async function copyMatching(
   logger: Logger,
   tracker: CopyRuleTracker,
   directCandidate?: string,
+  rootCandidate?: string,
 ): Promise<void> {
   const sourceIsDirectory = (await stat(sourceRoot)).isDirectory();
+  // Include the extraction root itself so rules like '{UNPACKED}:...' can
+  // match the whole folder, not only its children.
   const sourcePaths = sourceIsDirectory
-    ? await pathsUnder(sourceRoot)
+    ? [sourceRoot, ...(await pathsUnder(sourceRoot))]
     : [sourceRoot];
   for (const sourcePath of sourcePaths) {
-    const candidate = (
-      sourceIsDirectory
-        ? relative(candidateRoot, sourcePath)
-        : (directCandidate ?? basename(sourcePath))
-    ).replaceAll('\\', '/');
+    const isRoot = sourceIsDirectory && sourcePath === sourceRoot;
+    // Candidate names are exposed without the UUID temp prefix.
+    const relativeToSource = stripUuidPrefix(
+      relative(sourceRoot, sourcePath).replaceAll('\\', '/'),
+    );
+    const relativeToCandidate = stripUuidPrefix(
+      relative(candidateRoot, sourcePath).replaceAll('\\', '/'),
+    );
+    // The extraction root matches by its own name ({UNPACKED}); children match
+    // as plain names (e.g. 'tool.exe'), as paths relative to the temp root
+    // (e.g. 'archive-contents/tool.exe'), and as '{UNPACKED}/tool.exe' so
+    // rules like '^{UNPACKED}/llmfit.exe$' work.
+    const unpackedName = stripUuidPrefix(rootCandidate ?? relativeToCandidate);
+    let candidates = isRoot
+      ? [unpackedName, stripUuidPrefix(basename(sourcePath))]
+      : [
+          relativeToSource,
+          relativeToCandidate,
+          `${unpackedName}/${relativeToSource}`,
+        ];
+    if (!sourceIsDirectory) {
+      candidates.push(directCandidate ?? basename(sourcePath));
+    }
+    candidates = [...new Set(candidates.filter((c) => c && c !== '.'))];
+    // Extracted folders and anything under them are matched strictly (full-path
+    // anchors) so they cannot substring-match download-file rules.
+    const strict = sourceIsDirectory;
     for (const copyRule of rule.copy) {
       const parsed = parseCopyRule(copyRule);
       if (!parsed) {
@@ -151,11 +200,19 @@ async function copyMatching(
       // Unresolved placeholders mean this rule doesn't apply given the current captures - not an error.
       if (sourcePattern === undefined || destination === undefined) continue;
       tracker.resolved.add(copyRule);
-      if (!matchRule(sourcePattern, candidate).matched) continue;
+      if (
+        !candidates.some((candidate) =>
+          matchCandidate(sourcePattern, candidate, strict),
+        )
+      )
+        continue;
       tracker.matched.add(copyRule);
+      // For directories, copy the folder itself under its UUID-stripped name;
+      // for files the name is the direct candidate (UUID prefix already
+      // stripped).
       const destinationDirectory = resolve(targetPath(destination, appDir));
       const destinationName = sourceIsDirectory
-        ? basename(sourcePath)
+        ? stripUuidPrefix(basename(sourcePath))
         : (directCandidate ?? basename(sourcePath));
       const destinationIsFile =
         !sourceIsDirectory &&
@@ -184,12 +241,14 @@ async function copyMatching(
           url: link.url,
           status: 'copied',
           path: destinationPath,
+          rule: copyRule,
           captures,
         });
         await logger.info('File copied', {
           variant: variant.name,
           url: link.url,
-          source: candidate,
+          rule: copyRule,
+          source: candidates.join(', '),
           destination: destinationPath,
         });
       } catch (error) {
@@ -199,13 +258,15 @@ async function copyMatching(
           url: link.url,
           status: 'failed',
           path: destinationPath,
+          rule: copyRule,
           error: message,
           captures,
         });
         await logger.error('File copy failed', {
           variant: variant.name,
           url: link.url,
-          source: candidate,
+          rule: copyRule,
+          source: candidates.join(', '),
           destination: destinationPath,
           error: message,
         });
@@ -238,7 +299,9 @@ async function unpackNested(
     if (!matchAnyRule(rule.unpack, candidate, nestedCaptures)) continue;
     const nestedRoot = `${archivePath}-contents`;
     const extracted = await extractArchive(archivePath, nestedRoot);
-    const unpacked = relative(root, extracted.root).replaceAll('\\', '/');
+    const unpacked = stripUuidPrefix(
+      relative(root, extracted.root).replaceAll('\\', '/'),
+    );
     nestedCaptures.UNPACKED = unpacked;
     actions.push({
       variant: variant.name,
@@ -264,6 +327,8 @@ async function unpackNested(
       actions,
       logger,
       tracker,
+      undefined,
+      nestedCaptures.UNPACKED,
     );
     await unpackNested(
       variant,
@@ -328,16 +393,15 @@ export async function processDownloads(
         matchAnyRule(rule.unpack, name, fileCaptures)
       ) {
         const extracted = await extractArchive(temporaryPath, itemRoot);
-        const unpacked = relative(config.tempDir, extracted.root).replaceAll(
-          '\\',
-          '/',
+        const unpacked = stripUuidPrefix(
+          relative(config.tempDir, extracted.root).replaceAll('\\', '/'),
         );
         if (unpacked) fileCaptures.UNPACKED = unpacked;
         actions.push({
           variant: variant.name,
           url: link.url,
           status: 'unpacked',
-          path: relative(config.tempDir, extracted.root),
+          path: unpacked,
           captures: fileCaptures,
         });
         await logger.info('Archive unpacked', {
@@ -356,6 +420,8 @@ export async function processDownloads(
           actions,
           logger,
           copyRuleTracker,
+          undefined,
+          fileCaptures.UNPACKED,
         );
         await unpackNested(
           variant,
@@ -381,6 +447,7 @@ export async function processDownloads(
         logger,
         copyRuleTracker,
         name,
+        fileCaptures.UNPACKED,
       );
       await reportUnmatchedCopyRules(
         variant,
