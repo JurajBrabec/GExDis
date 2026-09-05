@@ -26,3 +26,29 @@ services:
       - ./app/release:/app/release
       - ./app/bin:/app/bin
       - ./app/log:/app/log
+
+  gexdis-dev:
+    build:
+      context: .
+      dockerfile: .dockerfile
+      target: dev
+    container_name: gexdis-dev
+    environment:
+      HOST: 0.0.0.0
+      # PORT: 3000
+    image: jurajbrabec/gexdis:dev
+    ports:
+      - "3000:3000"
+    # The dev image already runs as the unprivileged `bun` user; no explicit
+    # `user:` override needed (kept out to avoid fighting UID mapping on Windows).
+    volumes:
+      - ./app/config:/workspace/app/config:ro
+      - ./app/tmp:/workspace/app/tmp
+      - ./app/download:/workspace/app/download
+      - ./app/release:/workspace/app/release
+      - ./app/bin:/workspace/app/bin
+      - ./app/log:/workspace/app/log
+      # Bind the working tree so edits and hot-reload (bun --watch) apply live.
+      - .:/workspace
+    working_dir: /workspace
+    command: ["bun", "run", "dev"]

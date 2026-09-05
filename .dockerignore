@@ -1,6 +1,14 @@
 .git
 .github
 .agents
+.vscode
+.devcontainer
 app/gexdis*
-node_modules
+app/bin
+app/download
+app/log
+app/release
+app/tmp
 tmp
+node_modules
+*.log

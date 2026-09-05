@@ -1,0 +1,62 @@
+// For format details, see https://aka.ms/devcontainer.json
+{
+  "name": "gexdis (Bun dev)",
+  "build": {
+    // Context is the repo root (one level above .devcontainer).
+    "dockerfile": "../.dockerfile",
+    "context": "..",
+    "target": "dev"
+  },
+  // Must match the WORKDIR set by the dev image so src/archive.ts finds
+  // node_modules/node-unrar-js/dist/js/unrar.wasm relative to cwd.
+  "workspaceFolder": "/workspace",
+  // The dev image runs as `bun` (unprivileged, mirrors prod UX). If Windows
+  // bind-mount permissions fight this UID, set "remoteUser": "root" instead.
+  "remoteUser": "bun",
+  "mounts": [],
+  // Surface the app's listen port for local checks.
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": { "label": "gexdis", "onAutoForward": "notify" }
+  },
+  // Runtime env mirrors docker-compose (and the production compose file).
+  // Uncomment / extend as needed.
+  "containerEnv": {
+    "HOST": "0.0.0.0",
+    "PORT": "3000"
+    // "APP_DIR": "/workspace/app",
+    // "CONFIG_DIR": "/workspace/app/config",
+    // "RULES_FILE": "/workspace/app/config/rules.yml",
+    // "DOWNLOAD_DIR": "/workspace/app/download",
+    // "RELEASE_DIR": "/workspace/app/release",
+    // "BIN_DIR": "/workspace/app/bin",
+    // "LOG_DIR": "/workspace/app/log",
+    // "TMP_DIR": "/workspace/app/tmp",
+    // "IDLE_TIMEOUT_SECONDS": "60",
+    // "LOG_RETENTION_DAYS": "30",
+    // "DRY_RUN": "0"
+  },
+  "features": {},
+  "onCreateCommand": "",
+  "updateContentCommand": "",
+  "postCreateCommand": "bash .devcontainer/postCreate.sh",
+  "postAttachCommand": "",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "oven.bun-vscode",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "files.eol": "\n",
+        "files.insertFinalNewline": true,
+        "files.trimTrailingWhitespace": true,
+        "search.exclude": { "**/node_modules": true },
+        "typescript.tsdk": "/workspace/node_modules/typescript"
+      }
+    }
+  }
+}
