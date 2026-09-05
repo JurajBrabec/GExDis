@@ -13,6 +13,7 @@ services:
       # LOG_RETENTION_DAYS: 30
       # PORT: 3000
       # RELEASE_DIR: /app/release
+      # RULES_TOKEN: change-me
       # TMP_DIR: /app/tmp
     image: jurajbrabec/gexdis:latest
     ports:
@@ -20,7 +21,7 @@ services:
     restart: unless-stopped
     user: "${UID}:${GID}"
     volumes:
-      - ./app/config:/app/config:ro
+      - ./app/config:/app/config
       - ./app/tmp:/app/tmp
       - ./app/download:/app/download
       - ./app/release:/app/release
@@ -36,13 +37,14 @@ services:
     environment:
       HOST: 0.0.0.0
       # PORT: 3000
+      # RULES_TOKEN: change-me
     image: jurajbrabec/gexdis:dev
     ports:
       - "3000:3000"
     # The dev image already runs as the unprivileged `bun` user; no explicit
     # `user:` override needed (kept out to avoid fighting UID mapping on Windows).
     volumes:
-      - ./app/config:/workspace/app/config:ro
+      - ./app/config:/workspace/app/config
       - ./app/tmp:/workspace/app/tmp
       - ./app/download:/workspace/app/download
       - ./app/release:/workspace/app/release

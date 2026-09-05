@@ -1,6 +1,6 @@
-import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { parse, stringify } from 'yaml';
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import { parse, stringify } from "yaml";
 
 export interface RuleSet {
   name: string;
@@ -12,18 +12,18 @@ export interface RuleSet {
 }
 
 export function deriveNameFromUrl(pattern: string): string {
-  const withoutAnchors = pattern.replace(/^\^/, '').replace(/\$$/, '');
+  const withoutAnchors = pattern.replace(/^\^/, "").replace(/\$$/, "");
   const withoutGroups = withoutAnchors.replace(
     /\(\?<[A-Za-z0-9_]+>[^)]*\)/g,
-    '',
+    "",
   );
-  const unescaped = withoutGroups.replace(/\\(.)/g, '$1');
-  const withoutProtocol = unescaped.replace(/^[a-zA-Z]+:\/\//, '');
+  const unescaped = withoutGroups.replace(/\\(.)/g, "$1");
+  const withoutProtocol = unescaped.replace(/^[a-zA-Z]+:\/\//, "");
   const slug = withoutProtocol
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return slug || 'variant';
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "variant";
 }
 
 export interface RuleMatch {
@@ -32,7 +32,7 @@ export interface RuleMatch {
 }
 
 export function matchRule(pattern: string, candidate: string): RuleMatch {
-  const match = new RegExp(pattern, 'i').exec(candidate);
+  const match = new RegExp(pattern, "i").exec(candidate);
   if (!match) {
     return { matched: false, captures: {} };
   }
@@ -57,7 +57,7 @@ export function expandPlaceholders(
       const replacement = captures[name];
       if (replacement === undefined) {
         unresolved = true;
-        return '';
+        return "";
       }
       return replacement;
     },
@@ -87,7 +87,7 @@ export function matchAnyRule(
 export function parseCopyRule(
   rule: string,
 ): { source: string; target: string } | undefined {
-  const separator = rule.indexOf(':');
+  const separator = rule.indexOf(":");
   if (separator < 1 || separator === rule.length - 1) {
     return undefined;
   }
@@ -106,7 +106,25 @@ export async function loadRules(
     await mkdir(dirname(filePath), { recursive: true });
     await Bun.write(filePath, stringify({ variants: fallback }));
   }
-  const document = parse(await Bun.file(filePath).text()) as {
+  return parseAndResolveRules(await Bun.file(filePath).text(), fallback);
+}
+
+// Validates raw YAML text against the fallback schema, returning the resolved
+// rules. Used both when loading from disk and before persisting an edit via
+// the rules API, so a malformed document or a conflicting rule set is rejected
+// before it is ever saved.
+export function validateRulesText(
+  text: string,
+  fallback: Record<string, RuleSet[]>,
+): Record<string, RuleSet[]> {
+  return parseAndResolveRules(text, fallback);
+}
+
+function parseAndResolveRules(
+  text: string,
+  fallback: Record<string, RuleSet[]>,
+): Record<string, RuleSet[]> {
+  const document = parse(text) as {
     variants?: Record<string, Partial<RuleSet>[] | Partial<RuleSet>>;
   };
   const variants = document.variants ?? {};
@@ -140,6 +158,35 @@ export async function loadRules(
         resolvedRules.length
       ) {
         throw new Error(`Variant ${name} contains duplicate url rules`);
+      }
+      // Reject invalid regexes before they are saved, instead of failing at
+      // match time when the rules are applied to a URL.
+      for (const rule of resolvedRules) {
+        const regexFields: Array<[string, string]> = [
+          ["url", rule.url],
+          ...rule.get.map((pattern): [string, string] => ["get", pattern]),
+          ...(rule.unpack ?? []).map((pattern): [string, string] => [
+            "unpack",
+            pattern,
+          ]),
+          ...(rule.remove ?? []).map((pattern): [string, string] => [
+            "remove",
+            pattern,
+          ]),
+          ...(rule.copy ?? []).flatMap((pattern): [string, string][] => {
+            const parsed = parseCopyRule(pattern);
+            return parsed ? [["copy", parsed.source]] : [["copy", pattern]];
+          }),
+        ];
+        for (const [field, pattern] of regexFields) {
+          try {
+            new RegExp(pattern, "i");
+          } catch {
+            throw new Error(
+              `Variant ${name} rule "${rule.name}" has an invalid ${field} regex: "${pattern}"`,
+            );
+          }
+        }
       }
       return [name, resolvedRules];
     }),

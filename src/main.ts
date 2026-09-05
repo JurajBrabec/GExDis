@@ -1,10 +1,18 @@
-import { loadConfig } from './config.ts';
-import { Logger } from './logger.ts';
-import { fetchAllowed } from './http-client.ts';
-import { processDownloads } from './processor.ts';
-import { loadRules, expandPlaceholders, matchRule } from './rules.ts';
-import { defaultRules, isAllowedUrl, selectVariant } from './variants.ts';
-import { JobStore } from './jobs.ts';
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import { loadConfig } from "./config.ts";
+import { Logger } from "./logger.ts";
+import { fetchAllowed } from "./http-client.ts";
+import { processDownloads } from "./processor.ts";
+import {
+  loadRules,
+  validateRulesText,
+  expandPlaceholders,
+  matchRule,
+} from "./rules.ts";
+import { defaultRules, isAllowedUrl, selectVariant } from "./variants.ts";
+import { JobStore } from "./jobs.ts";
+import { editorPage } from "./editor-page.ts";
 
 const config = loadConfig();
 const logger = new Logger(
@@ -14,71 +22,155 @@ const logger = new Logger(
 );
 const jobs = new JobStore();
 await loadRules(config.rulesFile, defaultRules);
-await logger.info('Rules loaded', { rulesFile: config.rulesFile });
+await logger.info("Rules loaded", { rulesFile: config.rulesFile });
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, {
     status,
-    headers: { 'cache-control': 'no-store' },
+    headers: { "cache-control": "no-store" },
   });
 }
 
 async function handleStatus(id: string): Promise<Response> {
   const job = jobs.get(id);
   if (!job) {
-    return json({ error: 'Job not found' }, 404);
+    return json({ error: "Job not found" }, 404);
   }
   return json(job);
 }
 
+// Returns a collision-free message when the request is missing/mismatching the
+// rules-edit token, or undefined when the request is authorized.
+function rulesTokenError(request: Request): string | undefined {
+  if (!config.rulesToken) return undefined;
+  const presented =
+    request.headers.get("x-rules-token") ??
+    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
+    new URL(request.url).searchParams.get("token");
+  if (!presented) return "The rules API requires a token";
+  if (presented !== config.rulesToken) return "The supplied token is invalid";
+  return undefined;
+}
+
+function text(
+  content: string,
+  contentType = "text/plain; charset=utf-8",
+): Response {
+  return new Response(content, {
+    headers: {
+      "content-type": contentType,
+      "cache-control": "no-store",
+    },
+  });
+}
+
+async function handleGetRules(): Promise<Response> {
+  const file = Bun.file(config.rulesFile);
+  if (!(await file.exists())) {
+    return json({ error: "Rules file not found" }, 404);
+  }
+  return text(await file.text(), "text/yaml; charset=utf-8");
+}
+
+async function handlePutRules(request: Request): Promise<Response> {
+  const body = await request.text();
+  if (body.trim().length === 0) {
+    return json({ error: "The request body must contain YAML" }, 400);
+  }
+  const fallback = defaultRules;
+  try {
+    validateRulesText(body, fallback);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid YAML";
+    await logger.warn("Rules validation failed", { error: message });
+    return json({ error: message }, 400);
+  }
+  await mkdir(dirname(config.rulesFile), { recursive: true });
+  await Bun.write(config.rulesFile, body);
+  await logger.info("Rules updated", { rulesFile: config.rulesFile });
+  return json({ ok: true });
+}
+
+async function handleEditor(): Promise<Response> {
+  return text(editorPage, "text/html; charset=utf-8");
+}
+
 export async function handleRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  await logger.info('Request received', {
+  await logger.info("Request received", {
     method: request.method,
     path: url.pathname,
   });
 
-  if (url.pathname.startsWith('/status/')) {
-    return handleStatus(url.pathname.slice('/status/'.length));
+  if (url.pathname.startsWith("/status/")) {
+    return handleStatus(url.pathname.slice("/status/".length));
   }
 
-  if (url.pathname !== '/process') {
-    await logger.warn('Request path not found', { path: url.pathname });
-    return json({ error: 'Not found' }, 404);
+  if (url.pathname === "/api/rules") {
+    if (request.method === "GET") {
+      const tokenError = rulesTokenError(request);
+      if (tokenError) {
+        await logger.warn("Rules API authorization failed", {
+          error: tokenError,
+        });
+        return json({ error: tokenError }, 401);
+      }
+      return handleGetRules();
+    }
+    if (request.method === "PUT") {
+      const tokenError = rulesTokenError(request);
+      if (tokenError) {
+        await logger.warn("Rules API authorization failed", {
+          error: tokenError,
+        });
+        return json({ error: tokenError }, 401);
+      }
+      return handlePutRules(request);
+    }
+    return json({ error: "Method not allowed" }, 405);
   }
 
-  if (request.method !== 'GET') {
-    await logger.warn('Request method not allowed', { method: request.method });
-    return json({ error: 'Method not allowed' }, 405);
+  if (url.pathname === "/editor") {
+    return handleEditor();
   }
 
-  const source = url.searchParams.get('url');
+  if (url.pathname !== "/process") {
+    await logger.warn("Request path not found", { path: url.pathname });
+    return json({ error: "Not found" }, 404);
+  }
+
+  if (request.method !== "GET") {
+    await logger.warn("Request method not allowed", { method: request.method });
+    return json({ error: "Method not allowed" }, 405);
+  }
+
+  const source = url.searchParams.get("url");
   if (!source) {
-    await logger.warn('Request missing url parameter');
-    return json({ error: 'The url query parameter is required' }, 400);
+    await logger.warn("Request missing url parameter");
+    return json({ error: "The url query parameter is required" }, 400);
   }
 
   try {
     const parsed = new URL(source);
     if (!/^https?:$/.test(parsed.protocol)) {
-      await logger.warn('Request URL has unsupported protocol');
-      return json({ error: 'The url must use HTTP or HTTPS' }, 400);
+      await logger.warn("Request URL has unsupported protocol");
+      return json({ error: "The url must use HTTP or HTTPS" }, 400);
     }
   } catch {
-    await logger.warn('Request URL is invalid');
-    return json({ error: 'The url query parameter is invalid' }, 400);
+    await logger.warn("Request URL is invalid");
+    return json({ error: "The url query parameter is invalid" }, 400);
   }
 
   if (!isAllowedUrl(source)) {
-    await logger.warn('Request URL host is not allowed');
-    return json({ error: 'The supplied host is not allowed' }, 400);
+    await logger.warn("Request URL host is not allowed");
+    return json({ error: "The supplied host is not allowed" }, 400);
   }
 
   const rules = await loadRules(config.rulesFile, defaultRules);
   const selected = selectVariant(source, rules);
   if (!selected) {
-    await logger.warn('No variant matched request URL');
-    return json({ error: 'No variant matches the supplied URL' }, 404);
+    await logger.warn("No variant matched request URL");
+    return json({ error: "No variant matches the supplied URL" }, 404);
   }
 
   try {
@@ -86,7 +178,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       selected.variant.pageUrl(source),
     );
     if (!response.ok) {
-      await logger.warn('Source page returned an error', {
+      await logger.warn("Source page returned an error", {
         status: response.status,
       });
       return json(
@@ -100,7 +192,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     if (transformedUrl !== resolvedUrl) {
       ({ response } = await fetchAllowed(transformedUrl));
       if (!response.ok) {
-        await logger.warn('Source page returned an error', {
+        await logger.warn("Source page returned an error", {
           status: response.status,
         });
         return json(
@@ -132,32 +224,32 @@ export async function handleRequest(request: Request): Promise<Response> {
       );
     });
     if (downloads.length === 0) {
-      await logger.info('No actionable links found', {
+      await logger.info("No actionable links found", {
         variant: selected.variant.name,
       });
-      return json({ error: 'No actionable links found', actions: [] }, 422);
+      return json({ error: "No actionable links found", actions: [] }, 422);
     }
 
     if (
       config.dryRun ||
-      url.searchParams.get('dry_run')?.toLowerCase() === 'true'
+      url.searchParams.get("dry_run")?.toLowerCase() === "true"
     ) {
       const actions = downloads.map((link) => ({
         variant: selected.variant.name,
         url: link.url,
-        status: 'planned',
+        status: "planned",
         captures: link.captures,
       }));
       await Promise.all(
         actions.map((action) =>
-          logger.info('Dry-run action planned', {
+          logger.info("Dry-run action planned", {
             variant: action.variant,
             url: action.url,
             status: action.status,
           }),
         ),
       );
-      await logger.info('Dry-run actions planned', {
+      await logger.info("Dry-run actions planned", {
         variant: selected.variant.name,
         count: actions.length,
       });
@@ -169,11 +261,11 @@ export async function handleRequest(request: Request): Promise<Response> {
       job.actions.push({
         variant: selected.variant.name,
         url: source,
-        status: 'failed',
+        status: "failed",
         error: `No asset matched get pattern: "${pattern}"`,
         captures,
       });
-      await logger.warn('Get pattern matched no assets', {
+      await logger.warn("Get pattern matched no assets", {
         variant: selected.variant.name,
         pattern,
       });
@@ -190,15 +282,15 @@ export async function handleRequest(request: Request): Promise<Response> {
           job.actions,
         );
         jobs.complete(job.id);
-        await logger.info('Request completed', {
+        await logger.info("Request completed", {
           variant: selected.variant.name,
           count: job.actions.length,
         });
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : 'Unknown error';
+          error instanceof Error ? error.message : "Unknown error";
         jobs.fail(job.id, message);
-        await logger.error('Request processing failed', { error: message });
+        await logger.error("Request processing failed", { error: message });
       }
     })();
     return json(
@@ -206,13 +298,13 @@ export async function handleRequest(request: Request): Promise<Response> {
       202,
     );
   } catch (error) {
-    await logger.error('Request processing failed', {
-      error: error instanceof Error ? error.message : 'Unknown error',
+    await logger.error("Request processing failed", {
+      error: error instanceof Error ? error.message : "Unknown error",
     });
     return json(
       {
         error:
-          error instanceof Error ? error.message : 'Unable to process request',
+          error instanceof Error ? error.message : "Unable to process request",
       },
       422,
     );
@@ -226,4 +318,4 @@ export const server = Bun.serve({
   fetch: handleRequest,
 });
 
-await logger.info('GEXDIS listening', { url: server.url.toString() });
+await logger.info("GEXDIS listening", { url: server.url.toString() });
