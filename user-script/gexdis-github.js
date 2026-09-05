@@ -10,8 +10,8 @@
 // @description Send GitHub repository artefacts to GexDis downloader
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=github.com
 // @run-at      document-idle
-// @downloadURL https://raw.githubusercontent.com/NOiSE-GitHub/gexdis/main/user-script/gexdis-github.js
-// @updateURL   https://raw.githubusercontent.com/NOiSE-GitHub/gexdis/main/user-script/gexdis-github.js
+// @downloadURL https://raw.githubusercontent.com/JurajBrabec/GExDis/refs/heads/main/user-script/gexdis-github.js
+// @updateURL   https://raw.githubusercontent.com/JurajBrabec/GExDis/refs/heads/main/user-script/gexdis-github.js
 // ==/UserScript==
 
 (function () {

@@ -1,22 +1,22 @@
-import { copyFile, cp, mkdir, readdir, rm, stat } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve } from 'node:path';
-import { extractArchive, isArchive } from './archive.ts';
+import { copyFile, cp, mkdir, readdir, rm, stat } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { extractArchive, isArchive } from "./archive.ts";
 import {
   expandPlaceholders,
   matchAnyRule,
   matchRule,
   parseCopyRule,
   type RuleSet,
-} from './rules.ts';
-import type { DownloadLink, PageLink, Variant } from './variants.ts';
-import { isAllowedUrl } from './variants.ts';
-import { Logger } from './logger.ts';
-import { fetchAllowed } from './http-client.ts';
+} from "./rules.ts";
+import type { DownloadLink, PageLink, Variant } from "./variants.ts";
+import { isAllowedUrl } from "./variants.ts";
+import { Logger } from "./logger.ts";
+import { fetchAllowed } from "./http-client.ts";
 
 export interface ActionResult {
   variant: string;
   url: string;
-  status: 'downloaded' | 'unpacked' | 'copied' | 'removed' | 'failed';
+  status: "downloaded" | "unpacked" | "copied" | "removed" | "failed";
   path?: string;
   error?: string;
   rule?: string;
@@ -67,33 +67,6 @@ function createRemoveRuleTracker(): RemoveRuleTracker {
   return { invalid: new Set(), resolved: new Set(), matched: new Set() };
 }
 
-// Unpack rules that never matched any archive are requested actions that can
-// never run; report them instead of silently skipping.
-function reportUnmatchedUnpackRules(
-  variant: Variant,
-  rule: RuleSet,
-  captures: Record<string, string>,
-  matched: Set<string>,
-  actions: ActionResult[],
-  logger: Logger,
-): void {
-  if (!rule.unpack) return;
-  for (const unpackRule of rule.unpack) {
-    if (matched.has(unpackRule)) continue;
-    actions.push({
-      variant: variant.name,
-      url: '',
-      status: 'failed',
-      error: `No archive matched unpack rule: "${unpackRule}"`,
-      captures,
-    });
-    void logger.warn('Unpack rule matched no archives', {
-      variant: variant.name,
-      rule: unpackRule,
-    });
-  }
-}
-
 // Copy rules whose placeholders are unresolved (e.g. '{UNPACKED}' when nothing
 // was unpacked) are requested actions that can never run; report them once per
 // link instead of silently skipping.
@@ -122,11 +95,11 @@ function reportUnresolvedCopyRules(
       actions.push({
         variant: variant.name,
         url: link.url,
-        status: 'failed',
+        status: "failed",
         error: `Copy rule placeholders could not be resolved: "${copyRule}"`,
         captures,
       });
-      void logger.warn('Copy rule placeholders unresolved', {
+      void logger.warn("Copy rule placeholders unresolved", {
         variant: variant.name,
         url: link.url,
         rule: copyRule,
@@ -154,11 +127,11 @@ function reportUnmatchedCopyRules(
         actions.push({
           variant: variant.name,
           url: link.url,
-          status: 'failed',
+          status: "failed",
           error: `No file matched copy rule: "${copyRule}"`,
           captures,
         });
-        await logger.warn('Copy rule matched no files', {
+        await logger.warn("Copy rule matched no files", {
           variant: variant.name,
           url: link.url,
           rule: copyRule,
@@ -169,7 +142,7 @@ function reportUnmatchedCopyRules(
 
 function safeName(link: PageLink): string {
   const name = basename(new URL(link.url).pathname);
-  return name && name !== '.' && name !== '..' ? name : 'download';
+  return name && name !== "." && name !== ".." ? name : "download";
 }
 
 // Remove rules whose placeholders are unresolved (e.g. '{EXE_NAME}' when the
@@ -199,11 +172,11 @@ async function reportUnresolvedRemoveRules(
       actions.push({
         variant: variant.name,
         url: link.url,
-        status: 'failed',
+        status: "failed",
         error: `Remove rule placeholders could not be resolved: "${removeRule}"`,
         captures,
       });
-      await logger.warn('Remove rule placeholders unresolved', {
+      await logger.warn("Remove rule placeholders unresolved", {
         variant: variant.name,
         url: link.url,
         rule: removeRule,
@@ -232,11 +205,11 @@ function reportUnmatchedRemoveRules(
         actions.push({
           variant: variant.name,
           url: link.url,
-          status: 'failed',
+          status: "failed",
           error: `No file matched remove rule: "${removeRule}"`,
           captures,
         });
-        await logger.warn('Remove rule matched no files', {
+        await logger.warn("Remove rule matched no files", {
           variant: variant.name,
           url: link.url,
           rule: removeRule,
@@ -251,7 +224,7 @@ const UUID_PREFIX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i;
 
 function stripUuidPrefix(value: string): string {
-  return value.replace(UUID_PREFIX, '');
+  return value.replace(UUID_PREFIX, "");
 }
 
 // Extracted folders and their contents are matched strictly (the pattern must
@@ -265,12 +238,12 @@ function matchCandidate(
   strict: boolean,
 ): boolean {
   if (!strict) return matchRule(pattern, candidate).matched;
-  return new RegExp(`^(?:${pattern})$`, 'i').test(candidate);
+  return new RegExp(`^(?:${pattern})$`, "i").test(candidate);
 }
 
 function targetPath(target: string, appDir: string): string {
-  return target.startsWith('/app/')
-    ? join(appDir, target.slice('/app/'.length))
+  return target.startsWith("/app/")
+    ? join(appDir, target.slice("/app/".length))
     : target;
 }
 
@@ -337,10 +310,10 @@ async function copyMatching(
     const isRoot = sourceIsDirectory && sourcePath === sourceRoot;
     // Candidate names are exposed without the UUID temp prefix.
     const relativeToSource = stripUuidPrefix(
-      relative(sourceRoot, sourcePath).replaceAll('\\', '/'),
+      relative(sourceRoot, sourcePath).replaceAll("\\", "/"),
     );
     const relativeToCandidate = stripUuidPrefix(
-      relative(candidateRoot, sourcePath).replaceAll('\\', '/'),
+      relative(candidateRoot, sourcePath).replaceAll("\\", "/"),
     );
     // The extraction root matches by its own name ({UNPACKED}); children match
     // as plain names (e.g. 'tool.exe'), as paths relative to the temp root
@@ -357,7 +330,7 @@ async function copyMatching(
     if (!sourceIsDirectory) {
       candidates.push(directCandidate ?? basename(sourcePath));
     }
-    candidates = [...new Set(candidates.filter((c) => c && c !== '.'))];
+    candidates = [...new Set(candidates.filter((c) => c && c !== "."))];
     // Extracted folders and anything under them are matched strictly (full-path
     // anchors) so they cannot substring-match download-file rules.
     const strict = sourceIsDirectory;
@@ -369,11 +342,11 @@ async function copyMatching(
           actions.push({
             variant: variant.name,
             url: link.url,
-            status: 'failed',
+            status: "failed",
             error: `Invalid copy rule format: "${copyRule}"`,
             captures,
           });
-          await logger.error('Invalid copy rule format', {
+          await logger.error("Invalid copy rule format", {
             variant: variant.name,
             url: link.url,
             rule: copyRule,
@@ -425,36 +398,36 @@ async function copyMatching(
         actions.push({
           variant: variant.name,
           url: link.url,
-          status: 'copied',
+          status: "copied",
           path: destinationPath,
           rule: copyRule,
           captures,
           copied: (tracker.copied.get(copyRule) ?? 0) + 1,
         });
         tracker.copied.set(copyRule, (tracker.copied.get(copyRule) ?? 0) + 1);
-        await logger.info('File copied', {
+        await logger.info("File copied", {
           variant: variant.name,
           url: link.url,
           rule: copyRule,
-          source: candidates.join(', '),
+          source: candidates.join(", "),
           destination: destinationPath,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Copy failed';
+        const message = error instanceof Error ? error.message : "Copy failed";
         actions.push({
           variant: variant.name,
           url: link.url,
-          status: 'failed',
+          status: "failed",
           path: destinationPath,
           rule: copyRule,
           error: message,
           captures,
         });
-        await logger.error('File copy failed', {
+        await logger.error("File copy failed", {
           variant: variant.name,
           url: link.url,
           rule: copyRule,
-          source: candidates.join(', '),
+          source: candidates.join(", "),
           destination: destinationPath,
           error: message,
         });
@@ -489,11 +462,11 @@ async function removeMatching(
       actions.push({
         variant: variant.name,
         url: link.url,
-        status: 'failed',
+        status: "failed",
         error: `Invalid remove rule: must target a single /app/{subdir}/ folder: "${removeRule}"`,
         captures,
       });
-      await logger.error('Invalid remove rule scope', {
+      await logger.error("Invalid remove rule scope", {
         variant: variant.name,
         url: link.url,
         rule: removeRule,
@@ -511,7 +484,7 @@ async function removeMatching(
       if (
         !(
           error instanceof Error &&
-          (error as NodeJS.ErrnoException).code === 'ENOENT'
+          (error as NodeJS.ErrnoException).code === "ENOENT"
         )
       ) {
         throw error;
@@ -519,8 +492,8 @@ async function removeMatching(
       candidates = [];
     }
     const matches = candidates
-      .map((path) => `/app/${relative(appDir, path).replaceAll('\\', '/')}`)
-      .filter((path) => new RegExp(`^(?:${pattern})$`, 'i').test(path));
+      .map((path) => `/app/${relative(appDir, path).replaceAll("\\", "/")}`)
+      .filter((path) => new RegExp(`^(?:${pattern})$`, "i").test(path));
     if (matches.length === 0) continue;
     tracker.matched.add(removeRule);
 
@@ -529,20 +502,20 @@ async function removeMatching(
     let firstError: string | undefined;
     for (const path of matches) {
       // Map the virtual '/app/...' match back to the real on-disk path.
-      const realPath = join(appDir, path.slice('/app/'.length));
+      const realPath = join(appDir, path.slice("/app/".length));
       try {
         await rm(realPath, { recursive: true, force: true });
         removed++;
       } catch (error) {
         failed++;
-        firstError ??= error instanceof Error ? error.message : 'Remove failed';
+        firstError ??= error instanceof Error ? error.message : "Remove failed";
       }
     }
     if (failed > 0) {
       actions.push({
         variant: variant.name,
         url: link.url,
-        status: 'removed',
+        status: "removed",
         path: scope.subdir,
         rule: removeRule,
         captures,
@@ -550,7 +523,7 @@ async function removeMatching(
         failed,
         error: firstError,
       });
-      await logger.warn('Remove partially failed', {
+      await logger.warn("Remove partially failed", {
         variant: variant.name,
         url: link.url,
         rule: removeRule,
@@ -563,13 +536,13 @@ async function removeMatching(
     actions.push({
       variant: variant.name,
       url: link.url,
-      status: 'removed',
+      status: "removed",
       path: scope.subdir,
       rule: removeRule,
       captures,
       removed,
     });
-    await logger.info('Remove rule applied', {
+    await logger.info("Remove rule applied", {
       variant: variant.name,
       url: link.url,
       rule: removeRule,
@@ -588,14 +561,13 @@ async function unpackNested(
   actions: ActionResult[],
   logger: Logger,
   tracker: CopyRuleTracker,
-  matchedUnpackRules: Set<string>,
 ): Promise<void> {
   if (!rule.unpack) return;
   const nestedArchives = (await filesUnder(root)).filter((path) =>
     isArchive(path),
   );
   for (const archivePath of nestedArchives) {
-    const candidate = relative(root, archivePath).replaceAll('\\', '/');
+    const candidate = relative(root, archivePath).replaceAll("\\", "/");
     const nestedCaptures: Record<string, string> = {
       ...captures,
       DOWNLOADED: basename(archivePath),
@@ -607,11 +579,10 @@ async function unpackNested(
           .matched,
     );
     if (!matchedRule) continue;
-    matchedUnpackRules.add(matchedRule);
     const nestedRoot = `${archivePath}-contents`;
     const extracted = await extractArchive(archivePath, nestedRoot);
     const unpacked = stripUuidPrefix(
-      relative(root, extracted.root).replaceAll('\\', '/'),
+      relative(root, extracted.root).replaceAll("\\", "/"),
     );
     nestedCaptures.UNPACKED = unpacked;
     const fileCount = extracted.entries.filter(
@@ -620,12 +591,12 @@ async function unpackNested(
     actions.push({
       variant: variant.name,
       url: link.url,
-      status: 'unpacked',
+      status: "unpacked",
       path: unpacked,
       captures: nestedCaptures,
       unpacked: fileCount,
     });
-    await logger.info('Nested archive unpacked', {
+    await logger.info("Nested archive unpacked", {
       variant: variant.name,
       url: link.url,
       archive: candidate,
@@ -655,7 +626,6 @@ async function unpackNested(
       actions,
       logger,
       tracker,
-      matchedUnpackRules,
     );
   }
 }
@@ -676,7 +646,6 @@ export async function processDownloads(
   // zip link), so per-link tracking would produce false failures.
   const copyRuleTracker = createCopyRuleTracker();
   const removeRuleTracker = createRemoveRuleTracker();
-  const matchedUnpackRules = new Set<string>();
   for (const link of links) {
     const name = safeName(link);
     const temporaryPath = join(
@@ -687,7 +656,7 @@ export async function processDownloads(
     const fileCaptures: Record<string, string> = { ...link.captures };
     try {
       if (!isAllowedUrl(link.url)) {
-        throw new Error('Download host is not allowed');
+        throw new Error("Download host is not allowed");
       }
       const { response } = await fetchAllowed(link.url);
       if (!response.ok) {
@@ -698,11 +667,11 @@ export async function processDownloads(
       actions.push({
         variant: variant.name,
         url: link.url,
-        status: 'downloaded',
+        status: "downloaded",
         path: name,
         captures: fileCaptures,
       });
-      await logger.info('File downloaded', {
+      await logger.info("File downloaded", {
         variant: variant.name,
         url: link.url,
         file: name,
@@ -732,10 +701,9 @@ export async function processDownloads(
               .matched,
         );
       if (isArchive(name) && rule.unpack && matchedUnpackRule) {
-        matchedUnpackRules.add(matchedUnpackRule);
         const extracted = await extractArchive(temporaryPath, itemRoot);
         const unpacked = stripUuidPrefix(
-          relative(config.tempDir, extracted.root).replaceAll('\\', '/'),
+          relative(config.tempDir, extracted.root).replaceAll("\\", "/"),
         );
         if (unpacked) fileCaptures.UNPACKED = unpacked;
         const fileCount = extracted.entries.filter(
@@ -744,12 +712,12 @@ export async function processDownloads(
         actions.push({
           variant: variant.name,
           url: link.url,
-          status: 'unpacked',
+          status: "unpacked",
           path: unpacked,
           captures: fileCaptures,
           unpacked: fileCount,
         });
-        await logger.info('Archive unpacked', {
+        await logger.info("Archive unpacked", {
           variant: variant.name,
           url: link.url,
           root: extracted.root,
@@ -778,7 +746,6 @@ export async function processDownloads(
           actions,
           logger,
           copyRuleTracker,
-          matchedUnpackRules,
         );
       }
       await copyMatching(
@@ -815,15 +782,15 @@ export async function processDownloads(
       );
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Processing failed';
+        error instanceof Error ? error.message : "Processing failed";
       actions.push({
         variant: variant.name,
         url: link.url,
-        status: 'failed',
+        status: "failed",
         error: message,
         captures: fileCaptures,
       });
-      await logger.error('File processing failed', {
+      await logger.error("File processing failed", {
         variant: variant.name,
         url: link.url,
         error: message,
@@ -831,7 +798,7 @@ export async function processDownloads(
     } finally {
       await rm(temporaryPath, { force: true });
       await rm(itemRoot, { recursive: true, force: true });
-      await logger.info('Temporary files cleaned', {
+      await logger.info("Temporary files cleaned", {
         variant: variant.name,
         url: link.url,
       });
@@ -839,7 +806,7 @@ export async function processDownloads(
   }
   reportUnresolvedCopyRules(
     variant,
-    { url: '', path: '' },
+    { url: "", path: "" },
     rule,
     captures,
     copyRuleTracker,
@@ -848,18 +815,10 @@ export async function processDownloads(
   );
   await reportUnresolvedRemoveRules(
     variant,
-    { url: '', path: '' },
+    { url: "", path: "" },
     rule,
     captures,
     removeRuleTracker,
-    actions,
-    logger,
-  );
-  reportUnmatchedUnpackRules(
-    variant,
-    rule,
-    captures,
-    matchedUnpackRules,
     actions,
     logger,
   );

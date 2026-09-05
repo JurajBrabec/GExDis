@@ -1,12 +1,12 @@
-import { afterEach, expect, mock, test } from 'bun:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { BlobReader, BlobWriter, TextReader, ZipWriter } from '@zip.js/zip.js';
-import { extractArchive } from '../src/archive.ts';
-import { Logger } from '../src/logger.ts';
-import { processDownloads } from '../src/processor.ts';
-import { GitHubReleaseVariant, defaultRules } from '../src/variants.ts';
+import { afterEach, expect, mock, test } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BlobReader, BlobWriter, TextReader, ZipWriter } from "@zip.js/zip.js";
+import { extractArchive } from "../src/archive.ts";
+import { Logger } from "../src/logger.ts";
+import { processDownloads } from "../src/processor.ts";
+import { GitHubReleaseVariant, defaultRules } from "../src/variants.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -19,29 +19,29 @@ afterEach(async () => {
   );
 });
 
-test('downloads and copies matching files, then cleans temporary files', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("downloads and copies matching files, then cleans temporary files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const tempDir = join(directory, 'tmp');
-  const appDir = join(directory, 'app');
-  const logger = new Logger(join(directory, 'log'));
+  const tempDir = join(directory, "tmp");
+  const appDir = join(directory, "app");
+  const logger = new Logger(join(directory, "log"));
   const variant = new GitHubReleaseVariant(defaultRules.github);
   const link = {
-    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
-    path: '/tool.exe',
+    url: "https://github.com/acme/tool/releases/download/v1/tool.exe",
+    path: "/tool.exe",
   };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mock(() =>
-    Promise.resolve(new Response('binary')),
+    Promise.resolve(new Response("binary")),
   ) as unknown as typeof fetch;
 
   const actions = await processDownloads(
     variant,
     {
-      name: 'test',
-      url: 'url',
-      get: ['\\.exe$'],
-      copy: ['^tool\\.exe$:/app/bin/tool.exe'],
+      name: "test",
+      url: "url",
+      get: ["\\.exe$"],
+      copy: ["^tool\\.exe$:/app/bin/tool.exe"],
     },
     [{ ...link, captures: {} }],
     {},
@@ -50,41 +50,41 @@ test('downloads and copies matching files, then cleans temporary files', async (
   );
 
   expect(actions.map((action) => action.status)).toEqual([
-    'downloaded',
-    'copied',
+    "downloaded",
+    "copied",
   ]);
-  expect(await readFile(join(appDir, 'bin', 'tool.exe'), 'utf8')).toBe(
-    'binary',
+  expect(await readFile(join(appDir, "bin", "tool.exe"), "utf8")).toBe(
+    "binary",
   );
-  expect((await Array.fromAsync(new Bun.Glob('*').scan(tempDir))).length).toBe(
+  expect((await Array.fromAsync(new Bun.Glob("*").scan(tempDir))).length).toBe(
     0,
   );
   globalThis.fetch = originalFetch;
 });
 
-test('copies a single file to every matching copy rule destination', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("copies a single file to every matching copy rule destination", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const tempDir = join(directory, 'tmp');
-  const appDir = join(directory, 'app');
-  const logger = new Logger(join(directory, 'log'));
+  const tempDir = join(directory, "tmp");
+  const appDir = join(directory, "app");
+  const logger = new Logger(join(directory, "log"));
   const variant = new GitHubReleaseVariant(defaultRules.github);
   const link = {
-    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
-    path: '/tool.exe',
+    url: "https://github.com/acme/tool/releases/download/v1/tool.exe",
+    path: "/tool.exe",
   };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mock(() =>
-    Promise.resolve(new Response('binary')),
+    Promise.resolve(new Response("binary")),
   ) as unknown as typeof fetch;
 
   const actions = await processDownloads(
     variant,
     {
-      name: 'test',
-      url: 'url',
-      get: ['\\.exe$'],
-      copy: ['^tool\\.exe$:/app/download/', '^tool\\.exe$:/app/bin/tool.exe'],
+      name: "test",
+      url: "url",
+      get: ["\\.exe$"],
+      copy: ["^tool\\.exe$:/app/download/", "^tool\\.exe$:/app/bin/tool.exe"],
     },
     [{ ...link, captures: {} }],
     {},
@@ -94,39 +94,39 @@ test('copies a single file to every matching copy rule destination', async () =>
   globalThis.fetch = originalFetch;
 
   expect(actions.map((action) => action.status)).toEqual([
-    'downloaded',
-    'copied',
-    'copied',
+    "downloaded",
+    "copied",
+    "copied",
   ]);
   expect(actions[1].copied).toBe(1);
   expect(actions[2].copied).toBe(1);
-  expect(await readFile(join(appDir, 'download', 'tool.exe'), 'utf8')).toBe(
-    'binary',
+  expect(await readFile(join(appDir, "download", "tool.exe"), "utf8")).toBe(
+    "binary",
   );
-  expect(await readFile(join(appDir, 'bin', 'tool.exe'), 'utf8')).toBe(
-    'binary',
+  expect(await readFile(join(appDir, "bin", "tool.exe"), "utf8")).toBe(
+    "binary",
   );
 });
 
-test('reports an invalid copy rule as a failed action', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("reports an invalid copy rule as a failed action", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const tempDir = join(directory, 'tmp');
-  const appDir = join(directory, 'app');
-  const logger = new Logger(join(directory, 'log'));
+  const tempDir = join(directory, "tmp");
+  const appDir = join(directory, "app");
+  const logger = new Logger(join(directory, "log"));
   const variant = new GitHubReleaseVariant(defaultRules.github);
   const link = {
-    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
-    path: '/tool.exe',
+    url: "https://github.com/acme/tool/releases/download/v1/tool.exe",
+    path: "/tool.exe",
   };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mock(() =>
-    Promise.resolve(new Response('binary')),
+    Promise.resolve(new Response("binary")),
   ) as unknown as typeof fetch;
 
   const actions = await processDownloads(
     variant,
-    { name: 'test', url: 'url', get: ['\\.exe$'], copy: ['missing-colon'] },
+    { name: "test", url: "url", get: ["\\.exe$"], copy: ["missing-colon"] },
     [{ ...link, captures: {} }],
     {},
     { tempDir, appDir },
@@ -135,35 +135,35 @@ test('reports an invalid copy rule as a failed action', async () => {
   globalThis.fetch = originalFetch;
 
   expect(actions.map((action) => action.status)).toEqual([
-    'downloaded',
-    'failed',
+    "downloaded",
+    "failed",
   ]);
-  expect(actions.at(-1)?.error).toContain('Invalid copy rule format');
+  expect(actions.at(-1)?.error).toContain("Invalid copy rule format");
 });
 
-test('reports a copy rule that matched no file as a failed action', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("reports a copy rule that matched no file as a failed action", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const tempDir = join(directory, 'tmp');
-  const appDir = join(directory, 'app');
-  const logger = new Logger(join(directory, 'log'));
+  const tempDir = join(directory, "tmp");
+  const appDir = join(directory, "app");
+  const logger = new Logger(join(directory, "log"));
   const variant = new GitHubReleaseVariant(defaultRules.github);
   const link = {
-    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
-    path: '/tool.exe',
+    url: "https://github.com/acme/tool/releases/download/v1/tool.exe",
+    path: "/tool.exe",
   };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mock(() =>
-    Promise.resolve(new Response('binary')),
+    Promise.resolve(new Response("binary")),
   ) as unknown as typeof fetch;
 
   const actions = await processDownloads(
     variant,
     {
-      name: 'test',
-      url: 'url',
-      get: ['\\.exe$'],
-      copy: ['^does-not-exist\\.exe$:/app/bin'],
+      name: "test",
+      url: "url",
+      get: ["\\.exe$"],
+      copy: ["^does-not-exist\\.exe$:/app/bin"],
     },
     [{ ...link, captures: {} }],
     {},
@@ -173,37 +173,37 @@ test('reports a copy rule that matched no file as a failed action', async () => 
   globalThis.fetch = originalFetch;
 
   expect(actions.map((action) => action.status)).toEqual([
-    'downloaded',
-    'failed',
+    "downloaded",
+    "failed",
   ]);
-  expect(actions.at(-1)?.error).toContain('No file matched copy rule');
+  expect(actions.at(-1)?.error).toContain("No file matched copy rule");
 });
 
-test('reports a copy filesystem error without aborting other copy rules', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("reports a copy filesystem error without aborting other copy rules", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const tempDir = join(directory, 'tmp');
-  const appDir = join(directory, 'app');
+  const tempDir = join(directory, "tmp");
+  const appDir = join(directory, "app");
   // occupy the destination path with a file so mkdir(destinationDirectory) fails
-  await Bun.write(join(appDir, 'bin'), 'blocking-file');
-  const logger = new Logger(join(directory, 'log'));
+  await Bun.write(join(appDir, "bin"), "blocking-file");
+  const logger = new Logger(join(directory, "log"));
   const variant = new GitHubReleaseVariant(defaultRules.github);
   const link = {
-    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
-    path: '/tool.exe',
+    url: "https://github.com/acme/tool/releases/download/v1/tool.exe",
+    path: "/tool.exe",
   };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mock(() =>
-    Promise.resolve(new Response('binary')),
+    Promise.resolve(new Response("binary")),
   ) as unknown as typeof fetch;
 
   const actions = await processDownloads(
     variant,
     {
-      name: 'test',
-      url: 'url',
-      get: ['\\.exe$'],
-      copy: ['^tool\\.exe$:/app/bin/tool.exe', '^tool\\.exe$:/app/download'],
+      name: "test",
+      url: "url",
+      get: ["\\.exe$"],
+      copy: ["^tool\\.exe$:/app/bin/tool.exe", "^tool\\.exe$:/app/download"],
     },
     [{ ...link, captures: {} }],
     {},
@@ -213,19 +213,19 @@ test('reports a copy filesystem error without aborting other copy rules', async 
   globalThis.fetch = originalFetch;
 
   expect(actions.map((action) => action.status)).toEqual([
-    'downloaded',
-    'failed',
-    'copied',
+    "downloaded",
+    "failed",
+    "copied",
   ]);
-  expect(await readFile(join(appDir, 'download', 'tool.exe'), 'utf8')).toBe(
-    'binary',
+  expect(await readFile(join(appDir, "download", "tool.exe"), "utf8")).toBe(
+    "binary",
   );
 });
 
-test('reports a failed download and continues processing other links', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("reports a failed download and continues processing other links", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const logger = new Logger(join(directory, 'log'));
+  const logger = new Logger(join(directory, "log"));
   const variant = new GitHubReleaseVariant(defaultRules.github);
   const originalFetch = globalThis.fetch;
   let calls = 0;
@@ -233,67 +233,108 @@ test('reports a failed download and continues processing other links', async () 
     calls += 1;
     return calls === 1
       ? new Response(null, { status: 500 })
-      : new Response('ok');
+      : new Response("ok");
   }) as unknown as typeof fetch;
 
   const actions = await processDownloads(
     variant,
-    { name: 'test', url: 'url', get: ['\\.exe$'], copy: [] },
+    { name: "test", url: "url", get: ["\\.exe$"], copy: [] },
     [
       {
-        url: 'https://github.com/a/tool/releases/download/v1/one.exe',
-        path: '/one.exe',
+        url: "https://github.com/a/tool/releases/download/v1/one.exe",
+        path: "/one.exe",
         captures: {},
       },
       {
-        url: 'https://github.com/a/tool/releases/download/v1/two.exe',
-        path: '/two.exe',
+        url: "https://github.com/a/tool/releases/download/v1/two.exe",
+        path: "/two.exe",
         captures: {},
       },
     ],
     {},
-    { tempDir: join(directory, 'tmp'), appDir: join(directory, 'app') },
+    { tempDir: join(directory, "tmp"), appDir: join(directory, "app") },
     logger,
   );
   globalThis.fetch = originalFetch;
 
   expect(actions.map((action) => action.status)).toEqual([
-    'failed',
-    'downloaded',
+    "failed",
+    "downloaded",
   ]);
 });
 
-test('flattens a single root folder when extracting a ZIP', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("does not report a failed action when an unpack rule matches no archive", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const zipWriter = new ZipWriter(new BlobWriter('application/zip'));
-  await zipWriter.add('package/tool.exe', new TextReader('binary'));
+  const tempDir = join(directory, "tmp");
+  const appDir = join(directory, "app");
+  const logger = new Logger(join(directory, "log"));
+  const variant = new GitHubReleaseVariant(defaultRules.github);
+  const link = {
+    url: "https://github.com/acme/tool/releases/download/v1/tool.exe",
+    path: "/tool.exe",
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(() =>
+    Promise.resolve(new Response("binary")),
+  ) as unknown as typeof fetch;
+
+  // Rule set mirrors the real-world GitHub case: an unpack rule is declared but
+  // only an .exe asset is downloaded (no archive matches the unpack rule). This
+  // must not produce a spurious failed "No archive matched unpack rule" action.
+  const actions = await processDownloads(
+    variant,
+    {
+      name: "test",
+      url: "url",
+      get: ["\\.exe$"],
+      unpack: ["^{ZIP_NAME}$"],
+      copy: ["^tool\\.exe$:/app/bin"],
+    },
+    [{ ...link, captures: { ZIP_NAME: "unused" } }],
+    {},
+    { tempDir, appDir },
+    logger,
+  );
+  globalThis.fetch = originalFetch;
+
+  expect(actions.map((action) => action.status)).toEqual([
+    "downloaded",
+    "copied",
+  ]);
+});
+
+test("flattens a single root folder when extracting a ZIP", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
+  temporaryDirectories.push(directory);
+  const zipWriter = new ZipWriter(new BlobWriter("application/zip"));
+  await zipWriter.add("package/tool.exe", new TextReader("binary"));
   const zipBlob = await zipWriter.close();
-  const archivePath = join(directory, 'tool.zip');
+  const archivePath = join(directory, "tool.zip");
   await Bun.write(archivePath, zipBlob);
 
   const extracted = await extractArchive(
     archivePath,
-    join(directory, 'contents'),
+    join(directory, "contents"),
   );
-  expect(extracted.root.endsWith('contents')).toBe(true);
+  expect(extracted.root.endsWith("contents")).toBe(true);
   expect(extracted.entries.map((entry) => entry.relativePath)).toEqual([
-    'tool.exe',
+    "tool.exe",
   ]);
-  expect(await Bun.file(join(extracted.root, 'tool.exe')).text()).toBe(
-    'binary',
+  expect(await Bun.file(join(extracted.root, "tool.exe")).text()).toBe(
+    "binary",
   );
 });
 
-test('copies a file extracted from a flattened single root folder', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("copies a file extracted from a flattened single root folder", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const zipWriter = new ZipWriter(new BlobWriter('application/zip'));
-  await zipWriter.add('package/tool.exe', new TextReader('binary'));
+  const zipWriter = new ZipWriter(new BlobWriter("application/zip"));
+  await zipWriter.add("package/tool.exe", new TextReader("binary"));
   const zipBlob = await zipWriter.close();
-  const archivePath = join(directory, 'tool.zip');
+  const archivePath = join(directory, "tool.zip");
   await Bun.write(archivePath, zipBlob);
-  const logger = new Logger(join(directory, 'log'));
+  const logger = new Logger(join(directory, "log"));
   const variant = new GitHubReleaseVariant(defaultRules.github);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mock(() =>
@@ -303,76 +344,76 @@ test('copies a file extracted from a flattened single root folder', async () => 
   const actions = await processDownloads(
     variant,
     {
-      name: 'test',
-      url: 'url',
-      get: ['\\.zip$'],
-      unpack: ['^.+\\.zip$'],
-      copy: ['^tool\\.exe$:/app/release'],
+      name: "test",
+      url: "url",
+      get: ["\\.zip$"],
+      unpack: ["^.+\\.zip$"],
+      copy: ["^tool\\.exe$:/app/release"],
     },
     [
       {
-        url: 'https://github.com/acme/tool/releases/download/v1/tool.zip',
-        path: '/tool.zip',
+        url: "https://github.com/acme/tool/releases/download/v1/tool.zip",
+        path: "/tool.zip",
         captures: {},
       },
     ],
     {},
-    { tempDir: join(directory, 'tmp'), appDir: join(directory, 'app') },
+    { tempDir: join(directory, "tmp"), appDir: join(directory, "app") },
     logger,
   );
   globalThis.fetch = originalFetch;
 
   expect(actions.map((action) => action.status)).toEqual([
-    'downloaded',
-    'unpacked',
-    'copied',
+    "downloaded",
+    "unpacked",
+    "copied",
   ]);
-  expect(actions.find((a) => a.status === 'unpacked')?.unpacked).toBe(1);
+  expect(actions.find((a) => a.status === "unpacked")?.unpacked).toBe(1);
   expect(
-    await readFile(join(directory, 'app', 'release', 'tool.exe'), 'utf8'),
-  ).toBe('binary');
+    await readFile(join(directory, "app", "release", "tool.exe"), "utf8"),
+  ).toBe("binary");
 });
 
-test('rejects ZIP entries that escape the extraction root', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("rejects ZIP entries that escape the extraction root", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const zipWriter = new ZipWriter(new BlobWriter('application/zip'));
-  await zipWriter.add('../outside.txt', new TextReader('unsafe'));
-  const archivePath = join(directory, 'unsafe.zip');
+  const zipWriter = new ZipWriter(new BlobWriter("application/zip"));
+  await zipWriter.add("../outside.txt", new TextReader("unsafe"));
+  const archivePath = join(directory, "unsafe.zip");
   await Bun.write(archivePath, await zipWriter.close());
 
   await expect(
-    extractArchive(archivePath, join(directory, 'contents')),
+    extractArchive(archivePath, join(directory, "contents")),
   ).rejects.toThrow(/Unsafe (archive entry|filename)/);
 });
 
-test('removes files matching a remove rule before copying', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("removes files matching a remove rule before copying", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const tempDir = join(directory, 'tmp');
-  const appDir = join(directory, 'app');
-  const logger = new Logger(join(directory, 'log'));
+  const tempDir = join(directory, "tmp");
+  const appDir = join(directory, "app");
+  const logger = new Logger(join(directory, "log"));
   const variant = new GitHubReleaseVariant(defaultRules.github);
   const link = {
-    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
-    path: '/tool.exe',
+    url: "https://github.com/acme/tool/releases/download/v1/tool.exe",
+    path: "/tool.exe",
   };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mock(() =>
-    Promise.resolve(new Response('binary')),
+    Promise.resolve(new Response("binary")),
   ) as unknown as typeof fetch;
   // Pre-existing stale files that must be removed before the new one is placed.
-  await Bun.write(join(appDir, 'bin', 'tool-v1.2.0.exe'), 'old-version');
-  await Bun.write(join(appDir, 'bin', 'tool-v1.3.0.exe'), 'old-version');
+  await Bun.write(join(appDir, "bin", "tool-v1.2.0.exe"), "old-version");
+  await Bun.write(join(appDir, "bin", "tool-v1.3.0.exe"), "old-version");
 
   const actions = await processDownloads(
     variant,
     {
-      name: 'test',
-      url: 'url',
-      get: ['\\.exe$'],
-      copy: ['^tool\\.exe$:/app/bin/tool.exe'],
-      remove: ['^/app/bin/tool-v[0-9]+\\.[0-9]+\\.[0-9]+\\.exe$'],
+      name: "test",
+      url: "url",
+      get: ["\\.exe$"],
+      copy: ["^tool\\.exe$:/app/bin/tool.exe"],
+      remove: ["^/app/bin/tool-v[0-9]+\\.[0-9]+\\.[0-9]+\\.exe$"],
     },
     [{ ...link, captures: {} }],
     {},
@@ -382,48 +423,48 @@ test('removes files matching a remove rule before copying', async () => {
   globalThis.fetch = originalFetch;
 
   expect(actions.map((action) => action.status)).toEqual([
-    'downloaded',
-    'removed',
-    'copied',
+    "downloaded",
+    "removed",
+    "copied",
   ]);
-  const removedAction = actions.find((a) => a.status === 'removed');
+  const removedAction = actions.find((a) => a.status === "removed");
   expect(removedAction?.removed).toBe(2);
   expect(removedAction?.failed).toBeUndefined();
   await expect(
-    Bun.file(join(appDir, 'bin', 'tool-v1.2.0.exe')).exists(),
+    Bun.file(join(appDir, "bin", "tool-v1.2.0.exe")).exists(),
   ).resolves.toBe(false);
   await expect(
-    Bun.file(join(appDir, 'bin', 'tool-v1.3.0.exe')).exists(),
+    Bun.file(join(appDir, "bin", "tool-v1.3.0.exe")).exists(),
   ).resolves.toBe(false);
-  expect(await readFile(join(appDir, 'bin', 'tool.exe'), 'utf8')).toBe(
-    'binary',
+  expect(await readFile(join(appDir, "bin", "tool.exe"), "utf8")).toBe(
+    "binary",
   );
 });
 
-test('reports a remove rule that matched no file as a failed action', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("reports a remove rule that matched no file as a failed action", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const tempDir = join(directory, 'tmp');
-  const appDir = join(directory, 'app');
-  const logger = new Logger(join(directory, 'log'));
+  const tempDir = join(directory, "tmp");
+  const appDir = join(directory, "app");
+  const logger = new Logger(join(directory, "log"));
   const variant = new GitHubReleaseVariant(defaultRules.github);
   const link = {
-    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
-    path: '/tool.exe',
+    url: "https://github.com/acme/tool/releases/download/v1/tool.exe",
+    path: "/tool.exe",
   };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mock(() =>
-    Promise.resolve(new Response('binary')),
+    Promise.resolve(new Response("binary")),
   ) as unknown as typeof fetch;
 
   const actions = await processDownloads(
     variant,
     {
-      name: 'test',
-      url: 'url',
-      get: ['\\.exe$'],
+      name: "test",
+      url: "url",
+      get: ["\\.exe$"],
       copy: [],
-      remove: ['^/app/bin/does-not-exist\\.exe$'],
+      remove: ["^/app/bin/does-not-exist\\.exe$"],
     },
     [{ ...link, captures: {} }],
     {},
@@ -433,36 +474,36 @@ test('reports a remove rule that matched no file as a failed action', async () =
   globalThis.fetch = originalFetch;
 
   expect(actions.map((action) => action.status)).toEqual([
-    'downloaded',
-    'failed',
+    "downloaded",
+    "failed",
   ]);
-  expect(actions.at(-1)?.error).toContain('No file matched remove rule');
+  expect(actions.at(-1)?.error).toContain("No file matched remove rule");
 });
 
-test('reports a remove rule that escapes /app subdir as a failed action', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("reports a remove rule that escapes /app subdir as a failed action", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const tempDir = join(directory, 'tmp');
-  const appDir = join(directory, 'app');
-  const logger = new Logger(join(directory, 'log'));
+  const tempDir = join(directory, "tmp");
+  const appDir = join(directory, "app");
+  const logger = new Logger(join(directory, "log"));
   const variant = new GitHubReleaseVariant(defaultRules.github);
   const link = {
-    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
-    path: '/tool.exe',
+    url: "https://github.com/acme/tool/releases/download/v1/tool.exe",
+    path: "/tool.exe",
   };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mock(() =>
-    Promise.resolve(new Response('binary')),
+    Promise.resolve(new Response("binary")),
   ) as unknown as typeof fetch;
 
   const actions = await processDownloads(
     variant,
     {
-      name: 'test',
-      url: 'url',
-      get: ['\\.exe$'],
+      name: "test",
+      url: "url",
+      get: ["\\.exe$"],
       copy: [],
-      remove: ['^/bin/tool\\.exe$', '^/app/tool\\.exe$', '^/etc/passwd$'],
+      remove: ["^/bin/tool\\.exe$", "^/app/tool\\.exe$", "^/etc/passwd$"],
     },
     [{ ...link, captures: {} }],
     {},
@@ -471,35 +512,35 @@ test('reports a remove rule that escapes /app subdir as a failed action', async 
   );
   globalThis.fetch = originalFetch;
 
-  expect(actions.find((a) => a.status === 'failed')?.error).toContain(
-    'must target a single /app/{subdir}/ folder',
+  expect(actions.find((a) => a.status === "failed")?.error).toContain(
+    "must target a single /app/{subdir}/ folder",
   );
 });
 
-test('reports a remove rule with unresolved placeholders as a failed action', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'gexdis-processor-'));
+test("reports a remove rule with unresolved placeholders as a failed action", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
-  const tempDir = join(directory, 'tmp');
-  const appDir = join(directory, 'app');
-  const logger = new Logger(join(directory, 'log'));
+  const tempDir = join(directory, "tmp");
+  const appDir = join(directory, "app");
+  const logger = new Logger(join(directory, "log"));
   const variant = new GitHubReleaseVariant(defaultRules.github);
   const link = {
-    url: 'https://github.com/acme/tool/releases/download/v1/tool.exe',
-    path: '/tool.exe',
+    url: "https://github.com/acme/tool/releases/download/v1/tool.exe",
+    path: "/tool.exe",
   };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mock(() =>
-    Promise.resolve(new Response('binary')),
+    Promise.resolve(new Response("binary")),
   ) as unknown as typeof fetch;
 
   const actions = await processDownloads(
     variant,
     {
-      name: 'test',
-      url: 'url',
-      get: ['\\.exe$'],
+      name: "test",
+      url: "url",
+      get: ["\\.exe$"],
       copy: [],
-      remove: ['^/app/bin/{MISSING}\\.exe$'],
+      remove: ["^/app/bin/{MISSING}\\.exe$"],
     },
     [{ ...link, captures: {} }],
     {},
@@ -508,8 +549,8 @@ test('reports a remove rule with unresolved placeholders as a failed action', as
   );
   globalThis.fetch = originalFetch;
 
-  expect(actions.some((a) => a.status === 'failed')).toBe(true);
-  expect(actions.find((a) => a.status === 'failed')?.error).toContain(
-    'could not be resolved',
+  expect(actions.some((a) => a.status === "failed")).toBe(true);
+  expect(actions.find((a) => a.status === "failed")?.error).toContain(
+    "could not be resolved",
   );
 });
