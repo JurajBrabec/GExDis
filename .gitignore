@@ -1,3 +1,9 @@
 .vscode/
-app/
+app/bin
+app/config/rules.yml
+app/download
+app/log
+app/release
+app/tmp
+app/gexdis.exe
 node_modules/

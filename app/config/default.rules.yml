@@ -1,0 +1,25 @@
+variants:
+  github:
+    - name: default
+      url: ^https://github\.com/[^/]+/[^/]+/releases/tag/.+$
+      get:
+        - (?<EXE_NAME>[^/]+\.exe)$
+        - (?<ZIP_NAME>[^/]+\.zip)$
+      unpack:
+        - ^{ZIP_NAME}$
+      remove:
+        - '^/app/download/{ORG}-{REPO}-{TAG}/{EXE_NAME}-v[0-9]+\.[0-9]+\.[0-9]+\.exe$'
+      copy:
+        - ^{EXE_NAME}$:/app/download/{ORG}-{REPO}-{TAG}/{EXE_NAME}
+        - ^{ZIP_NAME}$:/app/download/{ORG}-{REPO}-{TAG}/{ZIP_NAME}
+        - ^{UNPACKED}/.+\.exe$:/app/download/{ORG}-{REPO}-{TAG}/{UNPACKED}
+  peeplink:
+    - name: default
+      url: ^https://peeplink\.in/(?<ID>.+)$
+      get:
+        - ^https://rg\.to/.+
+        - ^https://rapidgator\.net/.+
+      unpack:
+        - ^{DOWNLOADED}$
+      copy:
+        - ^{UNPACKED}$:/app/release
