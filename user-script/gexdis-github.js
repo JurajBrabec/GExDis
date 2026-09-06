@@ -5,7 +5,7 @@
 // @grant       GM.xmlHttpRequest
 // @connect     nas.home
 // @connect     http://nas.home:10203
-// @version     2026-09-05
+// @version     2026-09-06
 // @author      NOiSE
 // @description Send GitHub repository artefacts to GexDis downloader
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=github.com
@@ -20,7 +20,7 @@
   const DIV_SELECTOR =
     "#repo-content-pjax-container > div > div > div > div.Box-body > div.d-flex.flex-md-row.flex-column > div.d-flex.flex-row.flex-1.tmp-mb-3.wb-break-word > div.flex-1";
   const BUTTON_LABEL = "Download assets with GExDis";
-  const BUTTON_BUSY_LABEL = "GExDis in progress…";
+  const BUTTON_BUSY_LABEL = "Download in progress…";
   const BUTTON_DISABLED_LABEL = "GExDis disabled:";
 
   // Backend API configuration
@@ -71,30 +71,30 @@
       switch (action.status) {
         case "error":
           tag.classList.add("Label--danger");
-          tag.textContent = `Error`;
-          tag.title = JSON.stringify(action);
+          tag.textContent = `❌`;
+          tag.title = `Error ${JSON.stringify(action)}`;
           break;
         case "downloaded":
-          tag.textContent = `Downloaded ${insertNumberTag(1)}`;
-          tag.title = action.path;
+          tag.textContent = `🌐 ${insertNumberTag(1)}`;
+          tag.title = `Downloaded ${action.path}`;
           break;
         case "removed":
           tag.classList.add("Label--warning");
-          tag.textContent = `Removed ${insertNumberTag(action.removed)}`;
-          tag.title = action.rule;
+          tag.textContent = `🗑️ ${insertNumberTag(action.removed)}`;
+          tag.title = `Removed ${action.rule}`;
           break;
         case "unpacked":
-          tag.textContent = `Unpacked ${insertNumberTag(action.unpacked)}`;
-          tag.title = action.path;
+          tag.textContent = `📦 ${insertNumberTag(action.unpacked)}`;
+          tag.title = `Unpacked ${action.path}`;
           break;
         case "copied":
           tag.classList.add("Label--success");
-          tag.textContent = `Copied ${insertNumberTag(action.copied)}`;
-          tag.title = action.rule;
+          tag.textContent = `📁 ${insertNumberTag(action.copied)}`;
+          tag.title = `Copied ${action.rule}`;
           break;
         default:
           tag.classList.add("Label--info");
-          tag.textContent = `Unknown (${action.status})`;
+          tag.textContent = `❓ (${action.status})`;
           tag.title = JSON.stringify(action);
       }
       container.appendChild(tag);
@@ -213,6 +213,21 @@
     const span = document.createElement("span");
     span.id = "gexdis-container";
 
+    const anchor = document.createElement("a");
+    anchor.addEventListener("click", (e) => e.preventDefault());
+    anchor.classList.add(
+      "Button--secondary",
+      "Button--small",
+      "Button",
+      "v-align-text-bottom",
+    );
+    anchor.dataset.viewComponent = "true";
+    anchor.href = `${API_BASE}/editor`;
+    anchor.target = "_blank";
+    anchor.textContent = "⚙️";
+    anchor.title = "Open GExDis editor";
+    anchor.type = "button";
+
     const button = document.createElement("button");
     button.addEventListener("click", onButtonClick);
     button.classList.add(
@@ -220,8 +235,6 @@
       "Button--small",
       "Button",
       "v-align-text-bottom",
-      "d-none",
-      "d-md-inline-block",
     );
     button.dataset.viewComponent = "true";
     button.textContent = BUTTON_LABEL;
@@ -230,6 +243,7 @@
     const actions = document.createElement("span");
     actions.id = "gexdis-actions";
 
+    span.appendChild(anchor);
     span.appendChild(button);
     span.appendChild(actions);
     div.appendChild(span);
