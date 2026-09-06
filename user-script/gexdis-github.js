@@ -5,7 +5,7 @@
 // @grant       GM.xmlHttpRequest
 // @connect     nas.home
 // @connect     http://nas.home:10203
-// @version     2026-09-06
+// @version     2026.09.06
 // @author      NOiSE
 // @description Send GitHub repository artefacts to GexDis downloader
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=github.com
