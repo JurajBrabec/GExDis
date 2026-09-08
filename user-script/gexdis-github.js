@@ -1,17 +1,17 @@
 // ==UserScript==
-// @name        GitHub send to GExDis
-// @namespace   Violentmonkey Scripts
-// @match       https://github.com/*/releases*
-// @grant       GM.xmlHttpRequest
-// @connect     nas.home
-// @connect     http://nas.home:10203
-// @version     2026.09.06
-// @author      NOiSE
-// @description Send GitHub repository artefacts to GexDis downloader
-// @icon        https://www.google.com/s2/favicons?sz=64&domain=github.com
-// @run-at      document-idle
-// @downloadURL https://raw.githubusercontent.com/JurajBrabec/GExDis/refs/heads/main/user-script/gexdis-github.js
-// @updateURL   https://raw.githubusercontent.com/JurajBrabec/GExDis/refs/heads/main/user-script/gexdis-github.js
+// @name         GitHub send to GExDis
+// @namespace    Violentmonkey Scripts
+// @match        https://github.com/*/releases*
+// @grant        GM.xmlHttpRequest
+// @connect      nas.home
+// @connect      http://nas.home:10203
+// @version      2026.09.08
+// @author       NOiSE
+// @description  Send GitHub repository artefacts to GexDis downloader
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=github.com
+// @run-at       document-idle
+// @downloadURL  https://raw.githubusercontent.com/JurajBrabec/GExDis/refs/heads/main/user-script/gexdis-github.js
+// @updateURL    https://raw.githubusercontent.com/JurajBrabec/GExDis/refs/heads/main/user-script/gexdis-github.js
 // ==/UserScript==
 
 (function () {
@@ -69,10 +69,10 @@
       tag.dataset.viewComponent = "true";
       tag.classList.add("Label", "Label--large");
       switch (action.status) {
-        case "error":
+        case "failed":
           tag.classList.add("Label--danger");
-          tag.textContent = `❌`;
-          tag.title = `Error ${JSON.stringify(action)}`;
+          tag.textContent = `❌ ${insertNumberTag(1)}`;
+          tag.title = `${action.error}`;
           break;
         case "downloaded":
           tag.textContent = `🌐 ${insertNumberTag(1)}`;
@@ -110,12 +110,6 @@
     if (result.status != "completed") {
       alert(`Job not completed ${result}`);
     }
-
-    result.actions.map((action) => {
-      if (action.status == "error") {
-        alert(`Action failed ${action}`);
-      }
-    });
   }
 
   // Disables the button and shows progress while a job is in flight.
@@ -214,7 +208,6 @@
     span.id = "gexdis-container";
 
     const anchor = document.createElement("a");
-    anchor.addEventListener("click", (e) => e.preventDefault());
     anchor.classList.add(
       "Button--secondary",
       "Button--small",
