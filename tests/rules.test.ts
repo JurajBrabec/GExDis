@@ -138,7 +138,7 @@ describe("rules", () => {
     );
     const loaded = await loadRules(filePath, defaultRules);
     expect(loaded.github[0].url).toBe(
-      "^https://github\\.com/acme/tool/releases/latest$",
+      "^https://github\\.com/acme/tool/releases/(tag/.+|latest)$",
     );
   });
 
@@ -152,7 +152,7 @@ describe("rules", () => {
     );
     const loaded = await loadRules(filePath, defaultRules);
     expect(loaded.github[0].url).toBe(
-      "^https://github\\.com/acme/tool/releases/latest$",
+      "^https://github\\.com/acme/tool/releases/(tag/.+|latest)$",
     );
   });
 

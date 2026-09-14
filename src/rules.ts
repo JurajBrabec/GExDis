@@ -150,7 +150,7 @@ function parseAndResolveRules(
                 const tag = rule.tag ?? "latest";
                 url =
                   tag === "latest"
-                    ? `^https://github\\.com/${org}/${repo}/releases/latest$`
+                    ? `^https://github\\.com/${org}/${repo}/releases/(tag/.+|latest)$`
                     : `^https://github\\.com/${org}/${repo}/releases/tag/${tag}$`;
               }
               if (!url) {
