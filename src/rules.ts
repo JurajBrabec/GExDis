@@ -49,6 +49,8 @@ export function matchRule(pattern: string, candidate: string): RuleMatch {
   return { matched: true, captures };
 }
 
+export const SEMVER = "v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)";
+
 export function expandPlaceholders(
   value: string,
   captures: Record<string, string>,
@@ -57,7 +59,8 @@ export function expandPlaceholders(
   const expanded = value.replace(
     /\{([A-Za-z][A-Za-z0-9_]*)\}/g,
     (_placeholder, name: string) => {
-      const replacement = captures[name];
+      const replacement =
+        captures[name] ?? (name === "SEMVER" ? SEMVER : undefined);
       if (replacement === undefined) {
         unresolved = true;
         return "";
