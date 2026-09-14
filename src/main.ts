@@ -144,14 +144,50 @@ export async function handleRequest(request: Request): Promise<Response> {
     return json({ error: "Method not allowed" }, 405);
   }
 
-  const source = url.searchParams.get("url");
-  if (!source) {
-    await logger.warn("Request missing url parameter");
-    return json({ error: "The url query parameter is required" }, 400);
+  // Accept either url parameter or org+repo+tag parameters
+  let source = url.searchParams.get("url");
+  const org = url.searchParams.get("org");
+  const repo = url.searchParams.get("repo");
+  const tag = url.searchParams.get("tag") ?? "latest";
+
+  // Validate that either url or org+repo is provided
+  if (!source && !(org && repo)) {
+    await logger.warn("Request missing url or org+repo parameters");
+    return json(
+      {
+        error: "Either 'url' or both 'org' and 'repo' parameters are required",
+      },
+      400,
+    );
   }
 
+  if (source && (org || repo)) {
+    await logger.warn("Request has both url and org/repo parameters");
+    return json(
+      { error: "Cannot specify both 'url' and 'org'/'repo' parameters" },
+      400,
+    );
+  }
+
+  // Construct URL from org/repo/tag if provided
+  if (org && repo) {
+    source =
+      tag === "latest"
+        ? `https://github.com/${org}/${repo}/releases/latest`
+        : `https://github.com/${org}/${repo}/releases/tag/${tag}`;
+    await logger.info("Constructed URL from org/repo/tag", {
+      org,
+      repo,
+      tag,
+      url: source,
+    });
+  }
+
+  // TypeScript: source is guaranteed non-null after validation/construction
+  const sourceUrl = source as string;
+
   try {
-    const parsed = new URL(source);
+    const parsed = new URL(sourceUrl);
     if (!/^https?:$/.test(parsed.protocol)) {
       await logger.warn("Request URL has unsupported protocol");
       return json({ error: "The url must use HTTP or HTTPS" }, 400);
@@ -161,13 +197,13 @@ export async function handleRequest(request: Request): Promise<Response> {
     return json({ error: "The url query parameter is invalid" }, 400);
   }
 
-  if (!isAllowedUrl(source)) {
+  if (!isAllowedUrl(sourceUrl)) {
     await logger.warn("Request URL host is not allowed");
     return json({ error: "The supplied host is not allowed" }, 400);
   }
 
   const rules = await loadRules(config.rulesFile, defaultRules);
-  const selected = selectVariant(source, rules);
+  const selected = selectVariant(sourceUrl, rules);
   if (!selected) {
     await logger.warn("No variant matched request URL");
     return json({ error: "No variant matches the supplied URL" }, 404);
@@ -175,7 +211,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
   try {
     let { response, url: resolvedUrl } = await fetchAllowed(
-      selected.variant.pageUrl(source),
+      selected.variant.pageUrl(sourceUrl),
     );
     if (!response.ok) {
       await logger.warn("Source page returned an error", {
@@ -256,11 +292,11 @@ export async function handleRequest(request: Request): Promise<Response> {
       return json(actions);
     }
 
-    const job = jobs.create(selected.variant.name, source);
+    const job = jobs.create(selected.variant.name, sourceUrl);
     for (const pattern of unmatchedGetPatterns) {
       job.actions.push({
         variant: selected.variant.name,
-        url: source,
+        url: sourceUrl,
         status: "failed",
         error: `No asset matched get pattern: "${pattern}"`,
         captures,

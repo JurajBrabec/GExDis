@@ -5,6 +5,9 @@ import { parse, stringify } from "yaml";
 export interface RuleSet {
   name: string;
   url: string;
+  org?: string;
+  repo?: string;
+  tag?: string;
   get: string[];
   unpack?: string[];
   copy: string[];
@@ -139,11 +142,35 @@ function parseAndResolveRules(
       const resolvedRules =
         configured.length > 0
           ? configured.map((rule, index) => {
-              const url = rule.url ?? defaults[index]?.url ?? defaults[0].url;
+              // Construct URL pattern from org/repo/tag for GitHub variant
+              let url = rule.url;
+              if (!url && name === "github" && rule.org && rule.repo) {
+                const org = rule.org;
+                const repo = rule.repo;
+                const tag = rule.tag ?? "latest";
+                url =
+                  tag === "latest"
+                    ? `^https://github\\.com/${org}/${repo}/releases/latest$`
+                    : `^https://github\\.com/${org}/${repo}/releases/tag/${tag}$`;
+              }
+              if (!url) {
+                url = defaults[index]?.url ?? defaults[0].url;
+              }
+              // Validate that either url or org+repo exists for GitHub
+              if (name === "github" && !rule.url && !(rule.org && rule.repo)) {
+                if (!defaults[index]?.url && !defaults[0]?.url) {
+                  throw new Error(
+                    `Variant ${name} rule must have either 'url' or both 'org' and 'repo'`,
+                  );
+                }
+              }
               return {
                 name:
                   rule.name ?? defaults[index]?.name ?? deriveNameFromUrl(url),
                 url,
+                org: rule.org,
+                repo: rule.repo,
+                tag: rule.tag,
                 get: rule.get ?? defaults[index]?.get ?? defaults[0].get,
                 unpack:
                   rule.unpack ?? defaults[index]?.unpack ?? defaults[0].unpack,
