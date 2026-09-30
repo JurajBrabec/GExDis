@@ -8,6 +8,7 @@ import {
   matchAnyRule,
   matchRule,
   parseCopyRule,
+  applySetVariables,
 } from "../src/rules.ts";
 import { defaultRules } from "../src/variants.ts";
 
@@ -34,6 +35,37 @@ describe("rules", () => {
       "release/file",
     );
     expect(expandPlaceholders("{MISSING}", {})).toBeUndefined();
+  });
+
+  test("resolves set variables in order, referencing builtins and earlier entries", () => {
+    const rule = {
+      name: "cli",
+      url: "^x$",
+      get: [],
+      copy: [],
+      set: {
+        PATTERN: "gh_{SEMVER}_windows_amd64\\.zip$",
+        WRAPPED: "[{PATTERN}]",
+      },
+    };
+    const resolved = applySetVariables(rule, { ORG: "cli" });
+    expect(resolved.PATTERN).toBe(
+      "gh_v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)_windows_amd64\\.zip$",
+    );
+    expect(resolved.WRAPPED).toBe(`[${resolved.PATTERN}]`);
+    expect(resolved.ORG).toBe("cli");
+  });
+
+  test("omits set variables that cannot be resolved", () => {
+    const rule = {
+      name: "cli",
+      url: "^x$",
+      get: [],
+      copy: [],
+      set: { PATTERN: "{MISSING}" },
+    };
+    const resolved = applySetVariables(rule, {});
+    expect(resolved.PATTERN).toBeUndefined();
   });
 
   test("persists captures from a matching rule", () => {
@@ -109,6 +141,33 @@ describe("rules", () => {
     // remove rules, so it becomes undefined.
     const written = await loadRules(`${directory}/omitted.yml`, defaultRules);
     expect(written.github[0].remove).toBeUndefined();
+  });
+
+  test("preserves set variables through loadRules", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/gexdis-rules-`);
+    temporaryDirectories.push(directory);
+    const filePath = `${directory}/rules.yml`;
+    await Bun.write(
+      filePath,
+      'variants:\n  github:\n    - url: "^https://example\\\\.com/.+$"\n      get:\n        - "{PATTERN}"\n      copy: []\n      set:\n        PATTERN: gh_{SEMVER}_windows_amd64\\.zip$\n',
+    );
+    const loaded = await loadRules(filePath, defaultRules);
+    expect(loaded.github[0].set).toEqual({
+      PATTERN: "gh_{SEMVER}_windows_amd64\\.zip$",
+    });
+  });
+
+  test("rejects set variable names that are not valid identifiers", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/gexdis-rules-`);
+    temporaryDirectories.push(directory);
+    const filePath = `${directory}/rules.yml`;
+    await Bun.write(
+      filePath,
+      "variants:\n  github:\n    - url: \"^https://example\\\\.com/.+$\"\n      get: []\n      copy: []\n      set:\n        'bad-name': value\n",
+    );
+    expect(loadRules(filePath, defaultRules)).rejects.toThrow(
+      'has an invalid set variable name: "bad-name"',
+    );
   });
 
   test("constructs url pattern from org/repo/tag for GitHub variant", async () => {

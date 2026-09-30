@@ -9,6 +9,7 @@ import {
   validateRulesText,
   expandPlaceholders,
   matchRule,
+  applySetVariables,
 } from "./rules.ts";
 import { defaultRules, isAllowedUrl, selectVariant } from "./variants.ts";
 import { JobStore } from "./jobs.ts";
@@ -241,10 +242,10 @@ export async function handleRequest(request: Request): Promise<Response> {
       resolvedUrl,
       await response.text(),
     );
-    const captures = {
+    const captures = applySetVariables(selected.rule, {
       ...selected.captures,
       ...selected.variant.deriveCaptures(resolvedUrl),
-    };
+    });
     const downloads = selected.variant.matchingDownloads(
       links,
       captures,

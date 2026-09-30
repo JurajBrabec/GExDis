@@ -12,6 +12,7 @@ export interface RuleSet {
   unpack?: string[];
   copy: string[];
   remove?: string[];
+  set?: Record<string, string>;
 }
 
 export function deriveNameFromUrl(pattern: string): string {
@@ -69,6 +70,22 @@ export function expandPlaceholders(
     },
   );
   return unresolved ? undefined : expanded;
+}
+
+// Resolves a rule's 'set' variables in declaration order into a new capture map,
+// so later entries and get/remove/unpack/copy fields can reference earlier ones.
+export function applySetVariables(
+  rule: RuleSet,
+  captures: Record<string, string>,
+): Record<string, string> {
+  const resolved = { ...captures };
+  for (const [key, value] of Object.entries(rule.set ?? {})) {
+    const expanded = expandPlaceholders(value, resolved);
+    if (expanded !== undefined) {
+      resolved[key] = expanded;
+    }
+  }
+  return resolved;
 }
 
 export function matchAnyRule(
@@ -180,6 +197,7 @@ function parseAndResolveRules(
                 copy: rule.copy ?? defaults[index]?.copy ?? defaults[0].copy,
                 remove:
                   rule.remove ?? defaults[index]?.remove ?? defaults[0].remove,
+                set: rule.set ?? defaults[index]?.set ?? defaults[0].set,
               };
             })
           : defaults;
@@ -214,6 +232,13 @@ function parseAndResolveRules(
           } catch {
             throw new Error(
               `Variant ${name} rule "${rule.name}" has an invalid ${field} regex: "${pattern}"`,
+            );
+          }
+        }
+        for (const key of Object.keys(rule.set ?? {})) {
+          if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(key)) {
+            throw new Error(
+              `Variant ${name} rule "${rule.name}" has an invalid set variable name: "${key}"`,
             );
           }
         }
