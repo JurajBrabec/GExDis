@@ -366,15 +366,20 @@ async function copyMatching(
       )
         continue;
       tracker.matched.add(copyRule);
+      // sourceIsDirectory reflects the whole extraction root, not this
+      // specific match - a single file inside an unpacked archive must still
+      // be treated as a file so renaming copy rules (':/app/bin/new-name.exe')
+      // work instead of being nested under a folder named after the target.
+      const candidateIsDirectory = (await stat(sourcePath)).isDirectory();
       // For directories, copy the folder itself under its UUID-stripped name;
       // for files the name is the direct candidate (UUID prefix already
       // stripped).
       const destinationDirectory = resolve(targetPath(destination, appDir));
-      const destinationName = sourceIsDirectory
+      const destinationName = candidateIsDirectory
         ? stripUuidPrefix(basename(sourcePath))
         : (directCandidate ?? basename(sourcePath));
       const destinationIsFile =
-        !sourceIsDirectory &&
+        !candidateIsDirectory &&
         /\.[^/]+$/.test(destinationName) &&
         /\.[^/]+$/.test(destination);
       const destinationPath = destinationIsFile
@@ -387,7 +392,7 @@ async function copyMatching(
             : destinationDirectory,
           { recursive: true },
         );
-        if ((await stat(sourcePath)).isDirectory()) {
+        if (candidateIsDirectory) {
           await cp(sourcePath, destinationPath, {
             recursive: true,
             force: true,

@@ -374,6 +374,61 @@ test("copies a file extracted from a flattened single root folder", async () => 
   ).toBe("binary");
 });
 
+test("renames a file extracted from an archive when the copy target has no trailing slash", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
+  temporaryDirectories.push(directory);
+  const zipWriter = new ZipWriter(new BlobWriter("application/zip"));
+  await zipWriter.add(
+    "package/tool_windows_amd64.exe",
+    new TextReader("binary"),
+  );
+  const zipBlob = await zipWriter.close();
+  const archivePath = join(directory, "tool.zip");
+  await Bun.write(archivePath, zipBlob);
+  const logger = new Logger(join(directory, "log"));
+  const variant = new GitHubReleaseVariant(defaultRules.github);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(() =>
+    Promise.resolve(new Response(zipBlob)),
+  ) as unknown as typeof fetch;
+
+  const actions = await processDownloads(
+    variant,
+    {
+      name: "test",
+      url: "url",
+      get: ["\\.zip$"],
+      unpack: ["^.+\\.zip$"],
+      copy: ["^tool_windows_amd64\\.exe$:/app/bin/tool.exe"],
+    },
+    [
+      {
+        url: "https://github.com/acme/tool/releases/download/v1/tool.zip",
+        path: "/tool.zip",
+        captures: {},
+      },
+    ],
+    {},
+    { tempDir: join(directory, "tmp"), appDir: join(directory, "app") },
+    logger,
+  );
+  globalThis.fetch = originalFetch;
+
+  expect(actions.map((action) => action.status)).toEqual([
+    "downloaded",
+    "unpacked",
+    "copied",
+  ]);
+  expect(
+    await readFile(join(directory, "app", "bin", "tool.exe"), "utf8"),
+  ).toBe("binary");
+  expect(
+    await Bun.file(
+      join(directory, "app", "bin", "tool.exe", "tool_windows_amd64.exe"),
+    ).exists(),
+  ).toBe(false);
+});
+
 test("rejects ZIP entries that escape the extraction root", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
   temporaryDirectories.push(directory);
