@@ -87,7 +87,7 @@ test("GET /api/rules returns the current YAML as raw text", async () => {
 
 test("PUT /api/rules persists valid YAML verbatim", async () => {
   const { handleRequest, rulesFile } = await start(VALID_RULES);
-  const updated = `variants:\n  github:\n    - url: ^https://example\\.com/(?<ID>.+)$\n      get: []\n      copy: []\n`;
+  const updated = `variants:\n  github:\n    - name: example\n      url: ^https://example\\.com/(?<ID>.+)$\n      get: []\n      copy: []\n`;
   const response = await handleRequest(
     new Request("http://localhost/api/rules", {
       method: "PUT",
@@ -123,7 +123,7 @@ test("PUT /api/rules rejects malformed YAML with 400 and does not write", async 
 
 test("PUT /api/rules rejects duplicate url rules with 400", async () => {
   const { handleRequest } = await start(VALID_RULES);
-  const duplicate = `variants:\n  github:\n    - url: ^https://example\\.com$\n      get: []\n      copy: []\n    - url: ^https://example\\.com$\n      get: []\n      copy: []\n`;
+  const duplicate = `variants:\n  github:\n    - name: first\n      url: ^https://example\\.com$\n      get: []\n      copy: []\n    - name: second\n      url: ^https://example\\.com$\n      get: []\n      copy: []\n`;
   const response = await handleRequest(
     new Request("http://localhost/api/rules", {
       method: "PUT",
@@ -137,7 +137,7 @@ test("PUT /api/rules rejects duplicate url rules with 400", async () => {
 
 test("PUT /api/rules rejects invalid regexes with 400", async () => {
   const { handleRequest } = await start(VALID_RULES);
-  const invalidRegex = `variants:\n  github:\n    - url: ^https://example\\.com$\n      get:\n        - ([unclosed\n      copy: []\n`;
+  const invalidRegex = `variants:\n  github:\n    - name: example\n      url: ^https://example\\.com$\n      get:\n        - ([unclosed\n      copy: []\n`;
   const response = await handleRequest(
     new Request("http://localhost/api/rules", {
       method: "PUT",
@@ -147,6 +147,19 @@ test("PUT /api/rules rejects invalid regexes with 400", async () => {
   expect(response.status).toBe(400);
   const body = (await response.json()) as { error: string };
   expect(body.error).toContain("invalid get regex");
+});
+
+test("PUT /api/rules rejects GitHub rules without a name", async () => {
+  const { handleRequest } = await start(VALID_RULES);
+  const response = await handleRequest(
+    new Request("http://localhost/api/rules", {
+      method: "PUT",
+      body: `variants:\n  github:\n    - url: ^https://example\\.com$\n      get: []\n      copy: []\n`,
+    }),
+  );
+  expect(response.status).toBe(400);
+  const body = (await response.json()) as { error: string };
+  expect(body.error).toContain("non-empty 'name'");
 });
 
 test("rules endpoints require the token when RULES_TOKEN is set", async () => {

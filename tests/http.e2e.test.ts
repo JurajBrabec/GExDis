@@ -40,7 +40,7 @@ test("processes a GitHub URL through the HTTP handler end to end", async () => {
   await mkdir(configDir, { recursive: true });
   await Bun.write(
     rulesFile,
-    `variants:\n  github:\n    - url: ^https://github\\.com/acme/tool/releases/tag/(?<TAG>.+)$\n      get:\n        - (?<NAME>[^/]+\\.exe)$\n      copy:\n        - ^{NAME}$:/app/bin\n  peeplink:\n    - url: ^https://peeplink\\.in/(?<ID>.+)$\n      get: []\n      copy: []\n`,
+    `variants:\n  github:\n    - name: github\n      url: ^https://github\\.com/acme/tool/releases/tag/(?<TAG>.+)$\n      get:\n        - (?<NAME>[^/]+\\.exe)$\n      copy:\n        - ^{NAME}$:/app/bin\n  peeplink:\n    - url: ^https://peeplink\\.in/(?<ID>.+)$\n      get: []\n      copy: []\n`,
   );
   const environment = {
     APP_DIR: appDir,
@@ -120,7 +120,7 @@ test("resolves a /releases/latest redirect before applying the expanded_assets p
   await mkdir(configDir, { recursive: true });
   await Bun.write(
     rulesFile,
-    `variants:\n  github:\n    - url: ^https://github\\.com/acme/tool/releases/(tag/.+|latest)$\n      get:\n        - (?<NAME>[^/]+\\.exe)$\n      copy:\n        - ^{NAME}$:/app/bin/{TAG}/tool.exe\n  peeplink:\n    - url: ^https://peeplink\\.in/(?<ID>.+)$\n      get: []\n      copy: []\n`,
+    `variants:\n  github:\n    - name: github\n      url: ^https://github\\.com/acme/tool/releases/(tag/.+|latest)$\n      get:\n        - (?<NAME>[^/]+\\.exe)$\n      copy:\n        - ^{NAME}$:/app/bin/{TAG}/tool.exe\n  peeplink:\n    - url: ^https://peeplink\\.in/(?<ID>.+)$\n      get: []\n      copy: []\n`,
   );
   const environment = {
     APP_DIR: appDir,
@@ -197,7 +197,7 @@ test("processes a GitHub release using org/repo/tag query parameters", async () 
   await mkdir(configDir, { recursive: true });
   await Bun.write(
     rulesFile,
-    `variants:\n  github:\n    - url: ^https://github\\.com/.+/.+/releases/tag/.+$\n      get:\n        - (?<NAME>[^/]+\\.exe)$\n      copy:\n        - ^{NAME}$:/app/bin\n  peeplink:\n    - url: ^https://peeplink\\.in/(?<ID>.+)$\n      get: []\n      copy: []\n`,
+    `variants:\n  github:\n    - name: github\n      url: ^https://github\\.com/.+/.+/releases/tag/.+$\n      get:\n        - (?<NAME>[^/]+\\.exe)$\n      copy:\n        - ^{NAME}$:/app/bin\n  peeplink:\n    - url: ^https://peeplink\\.in/(?<ID>.+)$\n      get: []\n      copy: []\n`,
   );
   const environment = {
     APP_DIR: appDir,
@@ -264,7 +264,7 @@ test("uses latest when org/repo provided without tag parameter", async () => {
   await mkdir(configDir, { recursive: true });
   await Bun.write(
     rulesFile,
-    `variants:\n  github:\n    - url: ^https://github\\.com/.+/.+/releases/latest$\n      get:\n        - (?<NAME>[^/]+\\.exe)$\n      copy:\n        - ^{NAME}$:/app/bin\n  peeplink:\n    - url: ^https://peeplink\\.in/(?<ID>.+)$\n      get: []\n      copy: []\n`,
+    `variants:\n  github:\n    - name: github\n      url: ^https://github\\.com/.+/.+/releases/latest$\n      get:\n        - (?<NAME>[^/]+\\.exe)$\n      copy:\n        - ^{NAME}$:/app/bin\n  peeplink:\n    - url: ^https://peeplink\\.in/(?<ID>.+)$\n      get: []\n      copy: []\n`,
   );
   const environment = {
     APP_DIR: appDir,
@@ -331,7 +331,7 @@ test("rejects request with both url and org/repo parameters", async () => {
   await mkdir(configDir, { recursive: true });
   await Bun.write(
     rulesFile,
-    `variants:\n  github:\n    - url: ^test$\n      get: []\n      copy: []\n  peeplink:\n    - url: ^test$\n      get: []\n      copy: []\n`,
+    `variants:\n  github:\n    - name: github\n      url: ^test$\n      get: []\n      copy: []\n  peeplink:\n    - url: ^test$\n      get: []\n      copy: []\n`,
   );
   const environment = {
     APP_DIR: appDir,
@@ -382,7 +382,7 @@ test("rejects request with neither url nor org+repo parameters", async () => {
   await mkdir(configDir, { recursive: true });
   await Bun.write(
     rulesFile,
-    `variants:\n  github:\n    - url: ^test$\n      get: []\n      copy: []\n  peeplink:\n    - url: ^test$\n      get: []\n      copy: []\n`,
+    `variants:\n  github:\n    - name: github\n      url: ^test$\n      get: []\n      copy: []\n  peeplink:\n    - url: ^test$\n      get: []\n      copy: []\n`,
   );
   const environment = {
     APP_DIR: appDir,

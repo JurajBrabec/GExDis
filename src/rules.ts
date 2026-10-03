@@ -143,6 +143,10 @@ export function validateRulesText(
   return parseAndResolveRules(text, fallback);
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function parseAndResolveRules(
   text: string,
   fallback: Record<string, RuleSet[]>,
@@ -159,14 +163,50 @@ function parseAndResolveRules(
           ? configuredValue
           : [configuredValue]
         : [];
+      if (name === "github" && configured.length > 0) {
+        const names = configured.map((rule) => rule.name);
+        if (
+          names.some(
+            (ruleName) =>
+              typeof ruleName !== "string" || ruleName.trim().length === 0,
+          )
+        ) {
+          throw new Error(
+            "Variant github rules must each have a non-empty 'name'",
+          );
+        }
+        if (new Set(names).size !== names.length) {
+          throw new Error("Variant github contains duplicate rule names");
+        }
+      }
       const resolvedRules =
         configured.length > 0
           ? configured.map((rule, index) => {
-              // Construct URL pattern from org/repo/tag for GitHub variant
               let url = rule.url;
-              if (!url && name === "github" && rule.org && rule.repo) {
-                const org = rule.org;
-                const repo = rule.repo;
+              if (!url && name === "github") {
+                let org: string;
+                let repo: string;
+                if (rule.org) {
+                  if (!rule.repo) {
+                    throw new Error(
+                      `Variant github rule "${rule.name}" must specify 'repo' when 'org' is set`,
+                    );
+                  }
+                  org = rule.org;
+                  repo = rule.repo;
+                } else {
+                  const repository = rule.repo ?? rule.name;
+                  const parts =
+                    typeof repository === "string" ? repository.split("/") : [];
+                  if (parts.length !== 2 || parts.some((part) => !part)) {
+                    throw new Error(
+                      `Variant github rule "${rule.name}" repository must use 'owner/repository' format`,
+                    );
+                  }
+                  [org, repo] = parts;
+                }
+                org = escapeRegex(org);
+                repo = escapeRegex(repo);
                 const tag = rule.tag ?? "latest";
                 url =
                   tag === "latest"
@@ -176,17 +216,8 @@ function parseAndResolveRules(
               if (!url) {
                 url = defaults[index]?.url ?? defaults[0].url;
               }
-              // Validate that either url or org+repo exists for GitHub
-              if (name === "github" && !rule.url && !(rule.org && rule.repo)) {
-                if (!defaults[index]?.url && !defaults[0]?.url) {
-                  throw new Error(
-                    `Variant ${name} rule must have either 'url' or both 'org' and 'repo'`,
-                  );
-                }
-              }
               return {
-                name:
-                  rule.name ?? defaults[index]?.name ?? deriveNameFromUrl(url),
+                name: rule.name ?? defaults[index]?.name ?? deriveNameFromUrl(url),
                 url,
                 org: rule.org,
                 repo: rule.repo,

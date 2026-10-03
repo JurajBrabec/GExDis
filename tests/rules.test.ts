@@ -9,6 +9,7 @@ import {
   matchRule,
   parseCopyRule,
   applySetVariables,
+  validateRulesText,
 } from "../src/rules.ts";
 import { defaultRules } from "../src/variants.ts";
 
@@ -106,7 +107,7 @@ describe("rules", () => {
 
     await Bun.write(
       filePath,
-      'variants:\n  github:\n    - url: "^https://example\\\\.com/.+$"\n      get: []\n      copy: []\n',
+      'variants:\n  github:\n    - name: example\n      url: "^https://example\\\\.com/.+$"\n      get: []\n      copy: []\n',
     );
     const updated = await loadRules(filePath, defaultRules);
     expect(updated.github[0].url).toBe("^https://example\\.com/.+$");
@@ -118,7 +119,7 @@ describe("rules", () => {
     const filePath = `${directory}/rules.yml`;
     await Bun.write(
       filePath,
-      "variants:\n  github:\n    - url: same\n      get: []\n      copy: []\n    - url: same\n      get: []\n      copy: []\n",
+      "variants:\n  github:\n    - name: first\n      url: same\n      get: []\n      copy: []\n    - name: second\n      url: same\n      get: []\n      copy: []\n",
     );
     expect(loadRules(filePath, defaultRules)).rejects.toThrow(
       "Variant github contains duplicate url rules",
@@ -131,7 +132,7 @@ describe("rules", () => {
     const filePath = `${directory}/rules.yml`;
     await Bun.write(
       filePath,
-      "variants:\n  github:\n    - url: \"^https://example\\\\.com/.+$\"\n      get: []\n      copy: []\n      remove:\n        - '^/app/bin/{EXE_NAME}-v[0-9]+\\.exe$'\n",
+      "variants:\n  github:\n    - name: example\n      url: \"^https://example\\\\.com/.+$\"\n      get: []\n      copy: []\n      remove:\n        - '^/app/bin/{EXE_NAME}-v[0-9]+\\.exe$'\n",
     );
     const loaded = await loadRules(filePath, defaultRules);
     expect(loaded.github[0].remove).toEqual([
@@ -149,7 +150,7 @@ describe("rules", () => {
     const filePath = `${directory}/rules.yml`;
     await Bun.write(
       filePath,
-      'variants:\n  github:\n    - url: "^https://example\\\\.com/.+$"\n      get:\n        - "{PATTERN}"\n      copy: []\n      set:\n        PATTERN: gh_{SEMVER}_windows_amd64\\.zip$\n',
+      'variants:\n  github:\n    - name: example\n      url: "^https://example\\\\.com/.+$"\n      get:\n        - "{PATTERN}"\n      copy: []\n      set:\n        PATTERN: gh_{SEMVER}_windows_amd64\\.zip$\n',
     );
     const loaded = await loadRules(filePath, defaultRules);
     expect(loaded.github[0].set).toEqual({
@@ -163,7 +164,7 @@ describe("rules", () => {
     const filePath = `${directory}/rules.yml`;
     await Bun.write(
       filePath,
-      "variants:\n  github:\n    - url: \"^https://example\\\\.com/.+$\"\n      get: []\n      copy: []\n      set:\n        'bad-name': value\n",
+      "variants:\n  github:\n    - name: example\n      url: \"^https://example\\\\.com/.+$\"\n      get: []\n      copy: []\n      set:\n        'bad-name': value\n",
     );
     expect(loadRules(filePath, defaultRules)).rejects.toThrow(
       'has an invalid set variable name: "bad-name"',
@@ -176,7 +177,7 @@ describe("rules", () => {
     const filePath = `${directory}/rules.yml`;
     await Bun.write(
       filePath,
-      "variants:\n  github:\n    - org: acme\n      repo: tool\n      tag: v1.0.0\n      get: []\n      copy: []\n",
+      "variants:\n  github:\n    - name: tool\n      org: acme\n      repo: tool\n      tag: v1.0.0\n      get: []\n      copy: []\n",
     );
     const loaded = await loadRules(filePath, defaultRules);
     expect(loaded.github[0].url).toBe(
@@ -193,7 +194,7 @@ describe("rules", () => {
     const filePath = `${directory}/rules.yml`;
     await Bun.write(
       filePath,
-      "variants:\n  github:\n    - org: acme\n      repo: tool\n      get: []\n      copy: []\n",
+      "variants:\n  github:\n    - name: tool\n      org: acme\n      repo: tool\n      get: []\n      copy: []\n",
     );
     const loaded = await loadRules(filePath, defaultRules);
     expect(loaded.github[0].url).toBe(
@@ -207,7 +208,7 @@ describe("rules", () => {
     const filePath = `${directory}/rules.yml`;
     await Bun.write(
       filePath,
-      "variants:\n  github:\n    - org: acme\n      repo: tool\n      tag: latest\n      get: []\n      copy: []\n",
+      "variants:\n  github:\n    - name: tool\n      org: acme\n      repo: tool\n      tag: latest\n      get: []\n      copy: []\n",
     );
     const loaded = await loadRules(filePath, defaultRules);
     expect(loaded.github[0].url).toBe(
@@ -221,9 +222,118 @@ describe("rules", () => {
     const filePath = `${directory}/rules.yml`;
     await Bun.write(
       filePath,
-      'variants:\n  github:\n    - url: "^https://example\\\\.com/.+$"\n      org: acme\n      repo: tool\n      get: []\n      copy: []\n',
+      'variants:\n  github:\n    - name: tool\n      url: "^https://example\\\\.com/.+$"\n      org: acme\n      repo: tool\n      get: []\n      copy: []\n',
     );
     const loaded = await loadRules(filePath, defaultRules);
     expect(loaded.github[0].url).toBe("^https://example\\.com/.+$");
+  });
+
+  test("uses repo as the full repository when org is omitted", () => {
+    const loaded = validateRulesText(
+      `variants:
+  github:
+    - name: tool
+      repo: acme/tool
+      get: []
+      copy: []
+`,
+      defaultRules,
+    );
+    expect(loaded.github[0].url).toBe(
+      "^https://github\\.com/acme/tool/releases/(tag/.+|latest)$",
+    );
+  });
+
+  test("uses name as the full repository when repo and org are omitted", () => {
+    const loaded = validateRulesText(
+      `variants:
+  github:
+    - name: acme/tool
+      get: []
+      copy: []
+`,
+      defaultRules,
+    );
+    expect(loaded.github[0].url).toBe(
+      "^https://github\\.com/acme/tool/releases/(tag/.+|latest)$",
+    );
+  });
+
+  test("concatenates org and repo and treats both as literal path values", () => {
+    const loaded = validateRulesText(
+      `variants:
+  github:
+    - name: tool
+      org: ac.me
+      repo: other/tool+
+      get: []
+      copy: []
+`,
+      defaultRules,
+    );
+    expect(loaded.github[0].url).toBe(
+      "^https://github\\.com/ac\\.me/other/tool\\+/releases/(tag/.+|latest)$",
+    );
+  });
+
+  test("requires repo when org is specified without an explicit url", () => {
+    expect(() =>
+      validateRulesText(
+        `variants:
+  github:
+    - name: acme/tool
+      org: acme
+      get: []
+      copy: []
+`,
+        defaultRules,
+      ),
+    ).toThrow("must specify 'repo' when 'org' is set");
+  });
+
+  test("requires a full repository identifier when org is omitted", () => {
+    for (const repository of ["tool", "/tool", "acme/", "acme/one/two"]) {
+      expect(() =>
+        validateRulesText(
+          `variants:
+  github:
+    - name: tool
+      repo: "${repository}"
+      get: []
+      copy: []
+`,
+          defaultRules,
+        ),
+      ).toThrow("repository must use 'owner/repository' format");
+    }
+  });
+
+  test("requires explicit non-empty and unique GitHub rule names", () => {
+    for (const rule of [
+      "    - url: ^https://example\\.com$\n      get: []\n      copy: []",
+      "    - name: '   '\n      url: ^https://example\\.com$\n      get: []\n      copy: []",
+    ]) {
+      const text = `variants:\n  github:\n${rule}\n`;
+      expect(() => validateRulesText(text, defaultRules)).toThrow(
+        "non-empty 'name'",
+      );
+    }
+
+    expect(() =>
+      validateRulesText(
+        `variants:
+  github:
+    - name: tool
+      url: ^https://example\\.com/one$
+      get: []
+      copy: []
+    - name: tool
+      url: ^https://example\\.com/two$
+      get: []
+      copy: []
+`,
+        defaultRules,
+      ),
+    ).toThrow("duplicate rule names");
   });
 });
