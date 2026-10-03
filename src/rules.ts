@@ -217,7 +217,8 @@ function parseAndResolveRules(
                 url = defaults[index]?.url ?? defaults[0].url;
               }
               return {
-                name: rule.name ?? defaults[index]?.name ?? deriveNameFromUrl(url),
+                name:
+                  rule.name ?? defaults[index]?.name ?? deriveNameFromUrl(url),
                 url,
                 org: rule.org,
                 repo: rule.repo,
