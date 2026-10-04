@@ -2,6 +2,13 @@ variants:
   github:
     - name: default
       url: ^https://github\.com/[^/]+/[^/]+/releases/tag/.+$
+      # or specify the organization and repository explicitly (don't use url)
+      # org: org-name
+      # repo: repo-name
+      # or specify the full repository name directly (don't use org and url)
+      # repo: org-name/repo-name
+      # or specify the full repository name directly as name (don't use org, repo and url)
+      # name: org-name/repo-name
       get:
         - (?<EXE_NAME>[^/]+\.exe)$
         - (?<ZIP_NAME>[^/]+\.zip)$
