@@ -154,6 +154,15 @@ async function authorizeRules(request: Request): Promise<Response | undefined> {
   return json({ error: tokenError }, 401);
 }
 
+// Rules changes read, transform and write the whole file, so they run one at a time.
+let rulesQueue: Promise<unknown> = Promise.resolve();
+
+function serializeRulesChange<T>(operation: () => Promise<T>): Promise<T> {
+  const run = rulesQueue.then(operation);
+  rulesQueue = run.catch(() => undefined);
+  return run;
+}
+
 async function handleRulesApi(request: Request, url: URL): Promise<Response> {
   const denied = await authorizeRules(request);
   if (denied) return denied;
@@ -264,7 +273,8 @@ export async function handleRequest(request: Request): Promise<Response> {
   }
 
   if (url.pathname.startsWith("/api/rules")) {
-    return handleRulesApi(request, url);
+    if (request.method === "GET") return handleRulesApi(request, url);
+    return serializeRulesChange(() => handleRulesApi(request, url));
   }
 
   if (url.pathname === "/api/github/assets") {

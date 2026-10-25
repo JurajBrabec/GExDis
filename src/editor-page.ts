@@ -337,6 +337,7 @@ export const editorPage = `<!doctype html>
   const $ = (id) => document.getElementById(id);
   const SESSION_KEY = 'gexdis.rules.token';
   const BUILTINS = ['SEMVER', 'DOWNLOADED', 'UNPACKED'];
+  const GITHUB_CAPTURES = ['ORG', 'REPO', 'TAG'];
   const SEMVER_SRC = 'v?(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)';
   const PLACEHOLDER = /\\{([A-Za-z][A-Za-z0-9_]*)\\}/g;
   const GROUP = /\\(\\?<([A-Za-z][A-Za-z0-9_]*)>/g;
@@ -437,34 +438,66 @@ export const editorPage = `<!doctype html>
     $('undo-btn').classList.toggle('hidden', !(on && state.hasBackup));
   }
 
+  // The repo shown in the form: org + repo, or the name when it already is owner/repo.
+  function repoOf(rule) {
+    if (rule.repo) return rule.org ? rule.org + '/' + rule.repo : rule.repo;
+    return rule.name && rule.name.includes('/') ? rule.name : '';
+  }
+
+  // Parses a plain https://github.com/owner/repo/releases[/tag/X|/latest] pattern; null when it needs Raw YAML.
+  function migrationFromUrl(url) {
+    const plain = (url || '').replace(/\\\\/g, '');
+    const match = /^\\^?https:\\/\\/github\\.com\\/([^/]+)\\/([^/]+)\\/releases\\/(?:tag\\/(.+?)|latest)\\$?$/i.exec(plain);
+    if (!match) return null;
+    const repo = match[1] + '/' + match[2];
+    if (!isRepo(repo)) return null;
+    if (match[3] === undefined) return { repo, tag: '' };
+    if (!/^[A-Za-z0-9_.-]+$/.test(match[3])) return null;
+    return { repo, tag: match[3] };
+  }
+
+  // present: fields the rule has in YAML; touched: fields edited in this session. Only these are sent on save.
   function draftFromRule(rule) {
     return {
       name: rule.name || '',
-      repo: rule.repo || '',
+      repo: repoOf(rule),
       tag: rule.tag || '',
       setPairs: Object.entries(rule.set || {}),
       get: (rule.get || []).slice(),
       unpack: (rule.unpack || []).slice(),
       remove: (rule.remove || []).slice(),
       copy: (rule.copy || []).slice(),
+      present: new Set(Object.keys(rule)),
+      touched: new Set(),
+      template: 'single',
     };
   }
 
+  function touch(draft, field) {
+    draft.touched.add(field);
+  }
+
+  function sends(draft, field) {
+    if (draft.present.has(field) || draft.touched.has(field)) return true;
+    if (field === 'tag') return draft.tag.trim() !== '';
+    if (field === 'set') return draft.setPairs.some(([key]) => key);
+    return false;
+  }
+
   function payload(draft) {
-    const set = {};
-    for (const [key, value] of draft.setPairs) {
-      if (key) set[key] = value;
+    const out = { name: draft.name.trim(), repo: draft.repo.trim() };
+    if (sends(draft, 'tag')) out.tag = draft.tag.trim();
+    if (sends(draft, 'set')) {
+      const set = {};
+      for (const [key, value] of draft.setPairs) {
+        if (key) set[key] = value;
+      }
+      out.set = set;
     }
-    return {
-      name: draft.name.trim(),
-      repo: draft.repo.trim(),
-      tag: draft.tag.trim(),
-      set,
-      get: draft.get,
-      unpack: draft.unpack,
-      remove: draft.remove,
-      copy: draft.copy,
-    };
+    for (const field of ['get', 'unpack', 'remove', 'copy']) {
+      if (sends(draft, field)) out[field] = draft[field];
+    }
+    return out;
   }
 
   function isDirty() {
@@ -473,6 +506,10 @@ export const editorPage = `<!doctype html>
     const current = JSON.stringify(payload(state.draft));
     const saved = JSON.stringify(payload(draftFromRule(state.original)));
     return current !== saved;
+  }
+
+  function rawPending() {
+    return state.rawDirty && $('raw').value !== state.raw;
   }
 
   function openDialog(dialog, focusTarget) {
@@ -508,8 +545,22 @@ export const editorPage = `<!doctype html>
     return openDialog($('ask-dialog'));
   }
 
-  async function guardDiscard() {
-    return !isDirty() || (await askDialog('Discard changes?', 'Unsaved changes to this rule will be lost.', 'Discard'));
+  // Asks before discarding unsaved rule edits and/or raw YAML edits; on discard, the raw buffer is reset.
+  async function allowDiscard(includeForm, includeRaw) {
+    const formPending = includeForm && isDirty();
+    const rawNow = includeRaw && rawPending();
+    if (!formPending && !rawNow) return true;
+    const what = [formPending ? 'rule edits' : '', rawNow ? 'raw YAML edits' : ''].filter(Boolean).join(' and ');
+    const ok = await askDialog('Discard changes?', 'Unsaved ' + what + ' will be lost.', 'Discard');
+    if (ok && rawNow) {
+      state.rawDirty = false;
+      $('raw').value = state.raw;
+    }
+    return ok;
+  }
+
+  function guardDiscard() {
+    return allowDiscard(true, false);
   }
 
   function loadDraft(name) {
@@ -542,6 +593,7 @@ export const editorPage = `<!doctype html>
     clearBanner();
     if (token) sessionStorage.setItem(SESSION_KEY, token);
     else sessionStorage.removeItem(SESSION_KEY);
+    if (state.connected && !(await allowDiscard(true, true))) return;
     setStatus('Loading…', 'none');
     try {
       await refresh();
@@ -682,8 +734,15 @@ export const editorPage = `<!doctype html>
     return names;
   }
 
+  // Captures GitHub release URLs provide at runtime, plus set variables and named groups from the patterns.
   function availablePlaceholders(draft) {
-    const names = [...BUILTINS, ...draft.setPairs.map((pair) => pair[0]).filter(Boolean), ...groupNames(draft.get)];
+    const names = [
+      ...BUILTINS,
+      ...GITHUB_CAPTURES,
+      ...draft.setPairs.map((pair) => pair[0]).filter(Boolean),
+      ...groupNames(draft.get),
+      ...groupNames(draft.setPairs.map((pair) => pair[1])),
+    ];
     return [...new Set(names)];
   }
 
@@ -768,7 +827,7 @@ export const editorPage = `<!doctype html>
         lines.push(['bad', label + ' has an unknown placeholder']);
         return;
       }
-      const match = execSafe(expanded, asset);
+      const match = execSafe(expanded, encodeURIComponent(asset));
       if (match) {
         matched = true;
         Object.assign(captures, groupsOf(match));
@@ -860,18 +919,21 @@ export const editorPage = `<!doctype html>
     return parts.length === 2 && parts.every((part) => part && !/\\s/.test(part)) && !value.includes('{');
   }
 
-  // Turns an asset file name into a GET pattern: the first version becomes {SEMVER}, the rest is escaped.
+  // Turns an asset file name into a GET pattern matched at the end of the download URL: the first version
+  // becomes {SEMVER}, the rest is escaped. The name is matched in its URL-encoded form, as in download URLs.
   function assetPattern(name) {
     const escape = (text) => text.replace(/[.*+?^|()[\\]{}$\\\\]/g, '\\\\$&');
-    const match = /v?\\d+[.]\\d+[.]\\d+/.exec(name);
-    if (!match) return '^' + escape(name) + '$';
-    return '^' + escape(name.slice(0, match.index)) + '{SEMVER}' + escape(name.slice(match.index + match[0].length)) + '$';
+    const encoded = encodeURIComponent(name);
+    const match = /v?\\d+[.]\\d+[.]\\d+/.exec(encoded);
+    if (!match) return escape(encoded) + '$';
+    return escape(encoded.slice(0, match.index)) + '{SEMVER}' + escape(encoded.slice(match.index + match[0].length)) + '$';
   }
 
   function applyAssetToGet(name, replaceEmpty) {
     const draft = state.draft;
     const pattern = assetPattern(name);
     state.asset = name;
+    touch(draft, 'get');
     const empty = replaceEmpty ? draft.get.findIndex((item) => !item.trim()) : -1;
     if (empty >= 0) draft.get[empty] = pattern;
     else draft.get.push(pattern);
@@ -941,6 +1003,7 @@ export const editorPage = `<!doctype html>
       renderForm();
       return;
     }
+    touch(draft, 'get');
     draft.get.push('');
     renderForm();
     focusKey('get:' + (draft.get.length - 1));
@@ -956,6 +1019,7 @@ export const editorPage = `<!doctype html>
         'data-key': field + ':' + index,
         oninput: (event) => {
           draft[field][index] = event.target.value;
+          touch(draft, field);
           afterEdit();
         },
         onfocus: (event) => {
@@ -966,12 +1030,14 @@ export const editorPage = `<!doctype html>
         input,
         removeButton(() => {
           draft[field].splice(index, 1);
+          touch(draft, field);
           renderForm();
         }),
       ]));
     });
     wrap.append(addButton('+ Add pattern', field === 'get' ? addGetPattern : () => {
       draft[field].push('');
+      touch(draft, field);
       renderForm();
       focusKey(field + ':' + (draft[field].length - 1));
     }));
@@ -991,6 +1057,7 @@ export const editorPage = `<!doctype html>
         'data-key': 'copy:s:' + index,
         oninput: (event) => {
           draft.copy[index] = event.target.value + ':' + targetInput.value;
+          touch(draft, 'copy');
           afterEdit();
         },
         onfocus: (event) => {
@@ -1005,6 +1072,7 @@ export const editorPage = `<!doctype html>
         'data-key': 'copy:t:' + index,
         oninput: (event) => {
           draft.copy[index] = sourceInput.value + ':' + event.target.value;
+          touch(draft, 'copy');
           afterEdit();
         },
         onfocus: (event) => {
@@ -1017,12 +1085,14 @@ export const editorPage = `<!doctype html>
         targetInput,
         removeButton(() => {
           draft.copy.splice(index, 1);
+          touch(draft, 'copy');
           renderForm();
         }),
       ]));
     });
     wrap.append(addButton('+ Add copy rule', () => {
       draft.copy.push(':/app/download');
+      touch(draft, 'copy');
       renderForm();
       focusKey('copy:s:' + (draft.copy.length - 1));
     }));
@@ -1039,6 +1109,7 @@ export const editorPage = `<!doctype html>
         'data-key': 'set:k:' + index,
         oninput: (event) => {
           pair[0] = event.target.value;
+          touch(draft, 'set');
           afterEdit();
         },
         onfocus: (event) => {
@@ -1052,6 +1123,7 @@ export const editorPage = `<!doctype html>
         'data-key': 'set:v:' + index,
         oninput: (event) => {
           pair[1] = event.target.value;
+          touch(draft, 'set');
           afterEdit();
         },
         onfocus: (event) => {
@@ -1063,12 +1135,14 @@ export const editorPage = `<!doctype html>
         valueInput,
         removeButton(() => {
           draft.setPairs.splice(index, 1);
+          touch(draft, 'set');
           renderForm();
         }),
       ]));
     });
     wrap.append(addButton('+ Add variable', () => {
       draft.setPairs.push(['', '']);
+      touch(draft, 'set');
       renderForm();
       focusKey('set:k:' + (draft.setPairs.length - 1));
     }));
@@ -1082,6 +1156,7 @@ export const editorPage = `<!doctype html>
       class: 'grow',
       oninput: (event) => {
         draft[key] = event.target.value;
+        touch(draft, key);
         afterEdit();
       },
       onfocus: (event) => {
@@ -1098,6 +1173,7 @@ export const editorPage = `<!doctype html>
       class: 'grow',
       oninput: (event) => {
         draft.tag = event.target.value;
+        touch(draft, 'tag');
         afterEdit();
       },
       onfocus: (event) => {
@@ -1107,6 +1183,7 @@ export const editorPage = `<!doctype html>
     const setTag = (value) => {
       input.value = value;
       draft.tag = value;
+      touch(draft, 'tag');
       afterEdit();
     };
     return el('div', null, [
@@ -1143,6 +1220,49 @@ export const editorPage = `<!doctype html>
     input.dispatchEvent(new Event('input'));
   }
 
+  function applyTemplate(draft, name) {
+    const template = TEMPLATES[name];
+    draft.template = name;
+    for (const field of ['get', 'unpack', 'remove', 'copy']) {
+      draft[field] = template[field].slice();
+      touch(draft, field);
+    }
+  }
+
+  // Rules defined by a url are shown read-only until migrated to repo and tag.
+  function renderUrlRule(form) {
+    state.refs = null;
+    const migration = migrationFromUrl(state.original.url);
+    form.append(
+      el('div', { class: 'form-head' }, [
+        el('h2', { text: state.selected }),
+        el('span', { class: 'spacer' }),
+        el('button', { class: 'danger', text: 'Delete rule', onclick: deleteRule }),
+      ]),
+      el('div', { class: 'problems bad' }, [
+        el('div', { text: 'This rule is defined by a URL: ' + state.original.url + '. The editor works with repo and tag, so migrate it first.' }),
+        migration
+          ? el('div', { class: 'row' }, [
+              el('button', {
+                class: 'primary',
+                text: 'Migrate to ' + migration.repo + (migration.tag ? ' @ ' + migration.tag : ' (latest)'),
+                onclick: () => migrateRule(migration),
+              }),
+            ])
+          : el('div', { class: 'muted small', text: 'This URL cannot be expressed as repo and tag. Edit the rule in Raw YAML.' }),
+      ]),
+    );
+  }
+
+  async function migrateRule(migration) {
+    if (!(await allowDiscard(false, true))) return;
+    state.draft.repo = migration.repo;
+    state.draft.tag = migration.tag;
+    touch(state.draft, 'repo');
+    touch(state.draft, 'tag');
+    await saveRule();
+  }
+
   function renderForm() {
     const form = $('form');
     form.replaceChildren();
@@ -1157,6 +1277,10 @@ export const editorPage = `<!doctype html>
       state.refs = null;
       return;
     }
+    if (!state.isNew && state.original && state.original.url) {
+      renderUrlRule(form);
+      return;
+    }
 
     const save = el('button', { class: 'primary', text: state.isNew ? 'Create rule' : 'Save rule', onclick: saveRule });
     const revert = state.isNew ? null : el('button', { text: 'Revert', title: 'Discard unsaved edits. With no unsaved edits, restores the previous rules.yml.', onclick: revertRule });
@@ -1164,13 +1288,12 @@ export const editorPage = `<!doctype html>
     const templateSelect = state.isNew ? el('select', {
       'aria-label': 'Template',
       onchange: (event) => {
-        const template = TEMPLATES[event.target.value];
-        Object.assign(state.draft, { get: template.get.slice(), unpack: template.unpack.slice(), remove: template.remove.slice(), copy: template.copy.slice() });
+        applyTemplate(draft, event.target.value);
         renderForm();
       },
     }, [
-      el('option', { value: 'single', text: 'Template: single file' }),
-      el('option', { value: 'zip', text: 'Template: zip archive' }),
+      el('option', { value: 'single', text: 'Template: single file', selected: draft.template === 'single' ? '' : undefined }),
+      el('option', { value: 'zip', text: 'Template: zip archive', selected: draft.template === 'zip' ? '' : undefined }),
     ]) : null;
 
     state.refs = { save, revert };
@@ -1263,6 +1386,7 @@ export const editorPage = `<!doctype html>
       showBanner('error', 'Fix these before saving:\\n' + problems.join('\\n'));
       return;
     }
+    if (!(await allowDiscard(false, true))) return;
     clearBanner();
     const body = payload(draft);
     try {
@@ -1281,6 +1405,8 @@ export const editorPage = `<!doctype html>
 
   async function deleteRule() {
     const name = state.selected;
+    if (!(await allowDiscard(true, true))) return;
+    if (state.rules.length === 1 && !(await askDialog('Delete the last GitHub rule?', 'No GitHub rules will remain. The built-in defaults then apply to every GitHub URL, which can download far more than you intend. Continue?', 'Delete'))) return;
     clearBanner();
     try {
       if (!(await commit('DELETE', '/api/rules/github/' + encodeURIComponent(name), undefined, 'Delete rule ' + name))) return;
@@ -1328,12 +1454,8 @@ export const editorPage = `<!doctype html>
     state.isNew = true;
     state.selected = null;
     state.original = null;
-    state.draft = Object.assign({ name: repo.split('/')[1], repo, tag: parsed.tag, setPairs: [] }, {
-      get: TEMPLATES.single.get.slice(),
-      unpack: TEMPLATES.single.unpack.slice(),
-      remove: TEMPLATES.single.remove.slice(),
-      copy: TEMPLATES.single.copy.slice(),
-    });
+    state.draft = { name: repo.split('/')[1], repo, tag: parsed.tag, setPairs: [], present: new Set(), touched: new Set(), template: 'single', get: [], unpack: [], remove: [], copy: [] };
+    applyTemplate(state.draft, 'single');
     state.view = 'rules';
     setView('rules');
     renderAll();
@@ -1359,6 +1481,7 @@ export const editorPage = `<!doctype html>
 
   async function saveRaw() {
     clearBanner();
+    if (!(await allowDiscard(true, false))) return;
     const text = $('raw').value;
     try {
       await validateRaw();
@@ -1385,6 +1508,7 @@ export const editorPage = `<!doctype html>
   }
 
   async function undo() {
+    if (!(await allowDiscard(true, true))) return;
     if (!(await askDialog('Undo last save?', 'Restore the previous saved rules.yml. The current file becomes the new backup, so Undo again reverts this.', 'Restore'))) return;
     clearBanner();
     try {

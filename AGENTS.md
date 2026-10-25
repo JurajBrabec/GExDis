@@ -21,6 +21,8 @@ GEXDIS: a Bun HTTP service that scrapes a release/link page, downloads matching 
   - `POST /api/rules/validate` checks raw YAML without writing.
   - `GET /api/rules/backup` → `{available}`; `POST /api/rules/undo` swaps `rules.yml` with the backup (undoing twice returns to the newer version).
   - `GET /api/rules/github` lists GitHub rules as JSON. `POST /api/rules/github`, `PUT|DELETE /api/rules/github/:name` edit one rule and keep comments and key order (via `src/rules-store.ts`). Add `?preview=true` to get the resulting YAML back without writing.
+  - All non-GET rules requests run one at a time, so concurrent edits cannot overwrite each other. Files are written through a temp file and rename.
+  - `GET /api/github/assets?repo=owner/name[&tag=…]` lists a release's downloadable asset names for the editor's asset picker.
 - `src/variants.ts` holds the two variants (`github`, `peeplink`), `defaultRules`, and `allowedHosts`. A URL must match exactly one variant. Adding a new source host means editing `allowedHosts` there.
 - `src/rules.ts` parses and validates rules. Patterns are case-insensitive regexes. Named groups become `{NAME}` placeholders. `{SEMVER}` is built in. Copy rules use the form `pattern:target`.
 - Placeholders work in every rule field: `url`, `tag`, `org`, `repo`, `get`, `unpack`, `remove`, `copy`, and `set`. `url`, `tag`, `org`, and `repo` are expanded at load time, so they can use built-ins (`{SEMVER}`) and set variables, but not URL captures like `{TAG}`. An unknown placeholder there is a load error.

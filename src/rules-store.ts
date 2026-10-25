@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   isMap,
@@ -50,6 +50,14 @@ export function backupPathFor(rulesFile: string): string {
   return `${rulesFile}.bak`;
 }
 
+// Writes through a temp file and rename, so a crash never leaves a half-written rules file.
+async function writeAtomic(filePath: string, text: string): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  const temp = `${filePath}.tmp`;
+  await Bun.write(temp, text);
+  await rename(temp, filePath);
+}
+
 // Replaces the rules file, keeping the previous version as the single backup.
 export async function writeRulesFile(
   rulesFile: string,
@@ -59,8 +67,7 @@ export async function writeRulesFile(
   if (await current.exists()) {
     await Bun.write(backupPathFor(rulesFile), current);
   }
-  await mkdir(dirname(rulesFile), { recursive: true });
-  await Bun.write(rulesFile, text);
+  await writeAtomic(rulesFile, text);
 }
 
 // Swaps the current file with the backup, so a second undo restores the newer version.
@@ -69,9 +76,9 @@ export async function undoRulesFile(rulesFile: string): Promise<boolean> {
   if (!(await backup.exists())) return false;
   const current = Bun.file(rulesFile);
   const currentText = (await current.exists()) ? await current.text() : undefined;
-  await Bun.write(rulesFile, await backup.text());
+  await writeAtomic(rulesFile, await backup.text());
   if (currentText !== undefined) {
-    await Bun.write(backupPathFor(rulesFile), currentText);
+    await writeAtomic(backupPathFor(rulesFile), currentText);
   }
   return true;
 }
@@ -149,6 +156,13 @@ function githubSequence(
     variants.set("github", doc.createNode([]));
     github = variants.get("github", true);
   }
+  // A single rule written as a mapping is accepted by the loader; normalise it to a list.
+  if (isMap(github)) {
+    const list = doc.createNode([]) as YAMLSeq;
+    list.add(github);
+    variants.set("github", list);
+    github = variants.get("github", true);
+  }
   if (!isSeq(github)) {
     throw new RuleEditError("Variant github must be a list of rules", 400);
   }
@@ -180,20 +194,21 @@ function applyRuleFields(
         value !== null &&
         !Array.isArray(value) &&
         Object.keys(value).length === 0);
-    if (isEmpty && field === "name") {
+    if (field === "name") {
       item.set(field, doc.createNode(value));
-    } else if (isEmpty && (field === "get" || field === "copy")) {
-      item.set(field, doc.createNode([]));
-    } else if (isEmpty && (field === "unpack" || field === "remove")) {
-      // Absent unpack/remove fall back to defaults, so an explicit empty list is kept.
-      if (item.has(field)) item.set(field, doc.createNode([]));
+    } else if (LIST_FIELDS.includes(field as (typeof LIST_FIELDS)[number])) {
+      // Explicit lists, including empty ones, are written; absent fields are never touched.
+      setListItems(doc, item, field, value as string[]);
     } else if (isEmpty) {
       item.delete(field);
-    } else if (Array.isArray(value)) {
-      setListItems(doc, item, field, value);
     } else {
       item.set(field, doc.createNode(value));
     }
+  }
+  // A repo written in owner/name form replaces the legacy org and url forms.
+  if (typeof input.repo === "string" && input.repo.trim() !== "") {
+    item.delete("org");
+    item.delete("url");
   }
 }
 
