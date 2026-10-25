@@ -1,5 +1,3 @@
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
 import { loadConfig } from "./config.ts";
 import { Logger } from "./logger.ts";
 import { fetchAllowed } from "./http-client.ts";
@@ -11,9 +9,20 @@ import {
   matchRule,
   applySetVariables,
 } from "./rules.ts";
-import { defaultRules, isAllowedUrl, selectVariant } from "./variants.ts";
+import { defaultRules, GitHubReleaseVariant, isAllowedUrl, selectVariant } from "./variants.ts";
 import { JobStore } from "./jobs.ts";
 import { editorPage } from "./editor-page.ts";
+import {
+  RuleEditError,
+  addGithubRule,
+  backupPathFor,
+  deleteGithubRule,
+  listGithubRules,
+  parseGithubRuleInput,
+  undoRulesFile,
+  updateGithubRule,
+  writeRulesFile,
+} from "./rules-store.ts";
 
 const config = loadConfig();
 const logger = new Logger(
@@ -86,14 +95,161 @@ async function handlePutRules(request: Request): Promise<Response> {
     await logger.warn("Rules validation failed", { error: message });
     return json({ error: message }, 400);
   }
-  await mkdir(dirname(config.rulesFile), { recursive: true });
-  await Bun.write(config.rulesFile, body);
+  await writeRulesFile(config.rulesFile, body);
   await logger.info("Rules updated", { rulesFile: config.rulesFile });
   return json({ ok: true });
 }
 
+async function readRulesText(): Promise<string> {
+  const file = Bun.file(config.rulesFile);
+  if (!(await file.exists())) {
+    throw new RuleEditError("Rules file not found", 404);
+  }
+  return file.text();
+}
+
+async function readJsonBody(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    throw new RuleEditError("The request body must be JSON", 400);
+  }
+}
+
+// With ?preview=true the caller gets the resulting YAML back and nothing is written.
+async function commitRulesChange(
+  preview: boolean,
+  next: string,
+): Promise<Response> {
+  if (preview) return json({ text: next });
+  await writeRulesFile(config.rulesFile, next);
+  await logger.info("Rules updated", { rulesFile: config.rulesFile });
+  return json({ ok: true });
+}
+
+async function handleUndo(): Promise<Response> {
+  if (!(await undoRulesFile(config.rulesFile))) {
+    return json({ error: "No backup to restore" }, 404);
+  }
+  await logger.info("Rules restored from backup", {
+    rulesFile: config.rulesFile,
+  });
+  return json({ ok: true });
+}
+
+async function handleValidate(request: Request): Promise<Response> {
+  const body = await request.text();
+  if (body.trim().length === 0) {
+    return json({ error: "The request body must contain YAML" }, 400);
+  }
+  validateRulesText(body, defaultRules);
+  return json({ ok: true });
+}
+
+// Authorizes the rules API, returning the rejection response when the token is wrong.
+async function authorizeRules(request: Request): Promise<Response | undefined> {
+  const tokenError = rulesTokenError(request);
+  if (!tokenError) return undefined;
+  await logger.warn("Rules API authorization failed", { error: tokenError });
+  return json({ error: tokenError }, 401);
+}
+
+async function handleRulesApi(request: Request, url: URL): Promise<Response> {
+  const denied = await authorizeRules(request);
+  if (denied) return denied;
+  const route = url.pathname.slice("/api/rules".length);
+  const method = request.method;
+  const preview = url.searchParams.get("preview") === "true";
+  try {
+    if (route === "") {
+      if (method === "GET") return await handleGetRules();
+      if (method === "PUT") return await handlePutRules(request);
+    } else if (route === "/backup" && method === "GET") {
+      const available = await Bun.file(backupPathFor(config.rulesFile)).exists();
+      return json({ available });
+    } else if (route === "/undo" && method === "POST") {
+      return await handleUndo();
+    } else if (route === "/validate" && method === "POST") {
+      return await handleValidate(request);
+    } else if (route === "/github" && method === "GET") {
+      return json({ rules: listGithubRules(await readRulesText()) });
+    } else if (route === "/github" && method === "POST") {
+      const input = parseGithubRuleInput(await readJsonBody(request));
+      return await commitRulesChange(
+        preview,
+        addGithubRule(await readRulesText(), input),
+      );
+    } else if (route.startsWith("/github/")) {
+      const name = decodeURIComponent(route.slice("/github/".length));
+      if (method === "PUT") {
+        const input = parseGithubRuleInput(await readJsonBody(request));
+        return await commitRulesChange(
+          preview,
+          updateGithubRule(await readRulesText(), name, input),
+        );
+      }
+      if (method === "DELETE") {
+        return await commitRulesChange(
+          preview,
+          deleteGithubRule(await readRulesText(), name),
+        );
+      }
+    } else {
+      return json({ error: "Not found" }, 404);
+    }
+    return json({ error: "Method not allowed" }, 405);
+  } catch (error) {
+    const status = error instanceof RuleEditError ? error.status : 400;
+    const message = error instanceof Error ? error.message : "Invalid rules";
+    await logger.warn("Rules change rejected", { error: message });
+    return json({ error: message }, status);
+  }
+}
+
 async function handleEditor(): Promise<Response> {
   return text(editorPage, "text/html; charset=utf-8");
+}
+
+// Lists the downloadable asset names of a GitHub release, using the same page
+// fetch and link extraction as /process. Used by the editor's asset picker.
+async function handleReleaseAssets(request: Request, url: URL): Promise<Response> {
+  if (request.method !== "GET") {
+    return json({ error: "Method not allowed" }, 405);
+  }
+  const repo = url.searchParams.get("repo") ?? "";
+  const tag = url.searchParams.get("tag") ?? "";
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+    return json({ error: "repo must be in owner/name format" }, 400);
+  }
+  const page = tag
+    ? `https://github.com/${repo}/releases/tag/${encodeURIComponent(tag)}`
+    : `https://github.com/${repo}/releases/latest`;
+  try {
+    const variant = new GitHubReleaseVariant([]);
+    let { response, url: resolvedUrl } = await fetchAllowed(variant.pageUrl(page));
+    const transformed = variant.pageUrl(resolvedUrl);
+    if (transformed !== resolvedUrl) {
+      ({ response } = await fetchAllowed(transformed));
+    }
+    if (!response.ok) {
+      return json({ error: `GitHub returned HTTP ${response.status}` }, 422);
+    }
+    const links = variant.extractLinks(resolvedUrl, await response.text());
+    const assets = [
+      ...new Set(
+        links
+          .filter((link) => link.path.includes("/releases/download/"))
+          .map((link) => decodeURIComponent(link.path.split("/").pop() ?? ""))
+          .filter((name) => name.length > 0),
+      ),
+    ];
+    return json({ assets, release: resolvedUrl });
+  } catch (error) {
+    return json(
+      { error: error instanceof Error ? error.message : "Unable to list assets" },
+      422,
+    );
+  }
 }
 
 export async function handleRequest(request: Request): Promise<Response> {
@@ -107,28 +263,14 @@ export async function handleRequest(request: Request): Promise<Response> {
     return handleStatus(url.pathname.slice("/status/".length));
   }
 
-  if (url.pathname === "/api/rules") {
-    if (request.method === "GET") {
-      const tokenError = rulesTokenError(request);
-      if (tokenError) {
-        await logger.warn("Rules API authorization failed", {
-          error: tokenError,
-        });
-        return json({ error: tokenError }, 401);
-      }
-      return handleGetRules();
-    }
-    if (request.method === "PUT") {
-      const tokenError = rulesTokenError(request);
-      if (tokenError) {
-        await logger.warn("Rules API authorization failed", {
-          error: tokenError,
-        });
-        return json({ error: tokenError }, 401);
-      }
-      return handlePutRules(request);
-    }
-    return json({ error: "Method not allowed" }, 405);
+  if (url.pathname.startsWith("/api/rules")) {
+    return handleRulesApi(request, url);
+  }
+
+  if (url.pathname === "/api/github/assets") {
+    const denied = await authorizeRules(request);
+    if (denied) return denied;
+    return handleReleaseAssets(request, url);
   }
 
   if (url.pathname === "/editor") {

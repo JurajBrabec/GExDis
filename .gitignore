@@ -1,6 +1,7 @@
 .vscode/
 app/bin
 app/config/rules.yml
+app/config/rules.yml.bak
 app/download
 app/log
 app/release
