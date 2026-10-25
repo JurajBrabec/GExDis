@@ -205,7 +205,7 @@ function parseAndResolveRules(
       const resolvedRules =
         configured.length > 0
           ? configured.map((rule, index) => {
-              const set = rule.set ?? defaults[index]?.set ?? {};
+              const set = rule.set ?? defaults[index]?.set ?? defaults[0].set ?? {};
               const expand = (value: string) =>
                 expandStaticPlaceholders(value, set, rule.name ?? name);
               let url = rule.url ? expand(rule.url) : undefined;
