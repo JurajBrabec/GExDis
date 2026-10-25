@@ -147,6 +147,29 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// url, tag, org and repo are resolved when rules load, before any URL exists,
+// so they can use built-ins and set variables but not URL captures.
+function expandStaticPlaceholders(
+  value: string,
+  set: Record<string, string>,
+  ruleName: string,
+): string {
+  const resolved: Record<string, string> = Object.create(null);
+  for (const [key, setValue] of Object.entries(set)) {
+    const expanded = expandPlaceholders(setValue, resolved);
+    if (expanded !== undefined) {
+      resolved[key] = expanded;
+    }
+  }
+  const expanded = expandPlaceholders(value, resolved);
+  if (expanded === undefined) {
+    throw new Error(
+      `Rule "${ruleName}" value "${value}" uses a placeholder that is neither built in nor a set variable`,
+    );
+  }
+  return expanded;
+}
+
 function parseAndResolveRules(
   text: string,
   fallback: Record<string, RuleSet[]>,
@@ -182,7 +205,10 @@ function parseAndResolveRules(
       const resolvedRules =
         configured.length > 0
           ? configured.map((rule, index) => {
-              let url = rule.url;
+              const set = rule.set ?? defaults[index]?.set ?? defaults[0].set ?? {};
+              const expand = (value: string) =>
+                expandStaticPlaceholders(value, set, rule.name ?? name);
+              let url = rule.url ? expand(rule.url) : undefined;
               if (!url && name === "github") {
                 let org: string;
                 let repo: string;
@@ -192,12 +218,14 @@ function parseAndResolveRules(
                       `Variant github rule "${rule.name}" must specify 'repo' when 'org' is set`,
                     );
                   }
-                  org = rule.org;
-                  repo = rule.repo;
+                  org = expand(rule.org);
+                  repo = expand(rule.repo);
                 } else {
                   const repository = rule.repo ?? rule.name;
                   const parts =
-                    typeof repository === "string" ? repository.split("/") : [];
+                    typeof repository === "string"
+                      ? expand(repository).split("/")
+                      : [];
                   if (parts.length !== 2 || parts.some((part) => !part)) {
                     throw new Error(
                       `Variant github rule "${rule.name}" repository must use 'owner/repository' format`,
@@ -207,7 +235,7 @@ function parseAndResolveRules(
                 }
                 org = escapeRegex(org);
                 repo = escapeRegex(repo);
-                const tag = rule.tag ?? "latest";
+                const tag = expand(rule.tag ?? "latest");
                 url =
                   tag === "latest"
                     ? `^https://github\\.com/${org}/${repo}/releases/(tag/.+|latest)$`
