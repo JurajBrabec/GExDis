@@ -154,7 +154,7 @@ function expandStaticPlaceholders(
   set: Record<string, string>,
   ruleName: string,
 ): string {
-  const resolved: Record<string, string> = {};
+  const resolved: Record<string, string> = Object.create(null);
   for (const [key, setValue] of Object.entries(set)) {
     const expanded = expandPlaceholders(setValue, resolved);
     if (expanded !== undefined) {
