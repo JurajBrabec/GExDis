@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BlobWriter, TextReader, ZipWriter } from '@zip.js/zip.js';
-import { extractArchive } from '../src/archive.ts';
+import { extractArchive, resolveEntryPath } from '../src/archive.ts';
 
 const temporaryDirectories: string[] = [];
 
@@ -133,4 +133,9 @@ test('keeps structure for a tar with multiple root entries', async () => {
   expect(
     await Bun.file(join(extracted.root, 'folder1', 'file1.txt')).text(),
   ).toBe('one');
+});
+
+test('archive entry paths cannot escape the extraction root', () => {
+  expect(() => resolveEntryPath('C:/safe/root', '../outside.txt', '../outside.txt'))
+    .toThrow('Unsafe archive entry');
 });

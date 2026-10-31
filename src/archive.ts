@@ -1,5 +1,13 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 import { BlobReader, Uint8ArrayWriter, ZipReader } from '@zip.js/zip.js';
 import { createExtractorFromData } from 'node-unrar-js';
 
@@ -9,16 +17,39 @@ export interface ExtractedEntry {
   directory: boolean;
 }
 
+const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES = 20_000;
+const MAX_EXTRACTED_BYTES = 1024 * 1024 * 1024;
+
 function validateEntry(entryPath: string): string {
   const normalized = entryPath.replaceAll('\\', '/');
-  if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
+  if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) {
     throw new Error(`Unsafe archive entry: ${entryPath}`);
   }
-  const parts = normalized.split('/').filter(Boolean);
+  const parts = normalized.split('/').filter((part) => part && part !== '.');
   if (parts.includes('..')) {
     throw new Error(`Unsafe archive entry: ${entryPath}`);
   }
   return parts.join('/');
+}
+
+export function resolveEntryPath(
+  root: string,
+  relativePath: string,
+  entryPath: string,
+): string {
+  const rootPath = resolve(root);
+  const target = resolve(rootPath, relativePath);
+  const fromRoot = relative(rootPath, target);
+  if (
+    !fromRoot ||
+    fromRoot === '..' ||
+    fromRoot.startsWith(`..${sep}`) ||
+    isAbsolute(fromRoot)
+  ) {
+    throw new Error(`Unsafe archive entry: ${entryPath}`);
+  }
+  return target;
 }
 
 function archiveKind(fileName: string): 'zip' | 'tar' | 'rar' | undefined {
@@ -79,11 +110,18 @@ export async function extractArchive(
 ): Promise<{ root: string; entries: ExtractedEntry[] }> {
   const kind = archiveKind(filePath);
   if (!kind) throw new Error(`Unsupported archive format: ${filePath}`);
-  const bytes = new Uint8Array(await Bun.file(filePath).arrayBuffer());
-  const archiveBuffer = bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
+  const archiveFile = Bun.file(filePath);
+  if (archiveFile.size > MAX_ARCHIVE_BYTES) {
+    throw new Error(`Archive exceeds the ${MAX_ARCHIVE_BYTES}-byte limit`);
+  }
+  const bytes = new Uint8Array(await archiveFile.arrayBuffer());
+  const archiveBuffer =
+    kind === 'rar'
+      ? (bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength,
+        ) as ArrayBuffer)
+      : undefined;
   const listed: ExtractedEntry[] = [];
 
   if (kind === 'zip') {
@@ -116,7 +154,7 @@ export async function extractArchive(
       'node_modules/node-unrar-js/dist/js/unrar.wasm',
     );
     const extractor = await createExtractorFromData({
-      data: archiveBuffer,
+      data: archiveBuffer!,
       wasmBinary: await Bun.file(wasmPath).arrayBuffer(),
     });
     const files = extractor.getFileList().fileHeaders;
@@ -130,8 +168,13 @@ export async function extractArchive(
     }
   }
 
+  if (listed.length > MAX_ARCHIVE_ENTRIES) {
+    throw new Error(`Archive exceeds the ${MAX_ARCHIVE_ENTRIES}-entry limit`);
+  }
+
   const { root, rootFolder } = resolveExtractionRoot(filePath, listed, output);
   await mkdir(root, { recursive: true });
+  let extractedBytes = 0;
 
   if (kind === 'zip') {
     const reader = new ZipReader(new BlobReader(new Blob([bytes])));
@@ -143,15 +186,33 @@ export async function extractArchive(
         );
         if (!relativePath) continue;
         if (entry.directory) {
-          await mkdir(join(root, relativePath), { recursive: true });
+          await mkdir(resolveEntryPath(root, relativePath, entry.filename), {
+            recursive: true,
+          });
           continue;
         }
-        const target = resolve(root, relativePath);
-        const rootDir = resolve(root) + sep;
-        if (!target.startsWith(rootDir) && target !== resolve(root))
-          throw new Error(`Unsafe archive entry: ${entry.filename}`);
+        const target = resolveEntryPath(root, relativePath, entry.filename);
+        const declaredSize = (
+          entry as typeof entry & { uncompressedSize?: number }
+        ).uncompressedSize;
+        if (
+          typeof declaredSize === 'number' &&
+          Number.isFinite(declaredSize) &&
+          declaredSize > MAX_EXTRACTED_BYTES - extractedBytes
+        ) {
+          throw new Error(
+            `Archive expands beyond the ${MAX_EXTRACTED_BYTES}-byte limit`,
+          );
+        }
         await mkdir(dirname(target), { recursive: true });
-        await writeFile(target, await entry.getData(new Uint8ArrayWriter()));
+        const data = await entry.getData(new Uint8ArrayWriter());
+        extractedBytes += data.byteLength;
+        if (extractedBytes > MAX_EXTRACTED_BYTES) {
+          throw new Error(
+            `Archive expands beyond the ${MAX_EXTRACTED_BYTES}-byte limit`,
+          );
+        }
+        await writeFile(target, data);
       }
     } finally {
       await reader.close();
@@ -163,7 +224,13 @@ export async function extractArchive(
         rootFolder,
       );
       if (!relativePath) continue;
-      const target = resolve(root, relativePath);
+      const target = resolveEntryPath(root, relativePath, entryPath);
+      extractedBytes += file.size;
+      if (extractedBytes > MAX_EXTRACTED_BYTES) {
+        throw new Error(
+          `Archive expands beyond the ${MAX_EXTRACTED_BYTES}-byte limit`,
+        );
+      }
       await mkdir(dirname(target), { recursive: true });
       await Bun.write(target, file);
     }
@@ -173,7 +240,7 @@ export async function extractArchive(
       'node_modules/node-unrar-js/dist/js/unrar.wasm',
     );
     const extractor = await createExtractorFromData({
-      data: archiveBuffer,
+      data: archiveBuffer!,
       wasmBinary: await Bun.file(wasmPath).arrayBuffer(),
     });
     for (const entry of extractor.extract().files) {
@@ -185,12 +252,22 @@ export async function extractArchive(
       );
       if (!relativePath) continue;
       if (entry.fileHeader.flags.directory) {
-        await mkdir(join(root, relativePath), { recursive: true });
+        await mkdir(
+          resolveEntryPath(root, relativePath, entry.fileHeader.name),
+          { recursive: true },
+        );
         continue;
       }
-      const target = resolve(root, relativePath);
+      const target = resolveEntryPath(root, relativePath, entry.fileHeader.name);
+      const data = entry.extraction ?? new Uint8Array();
+      extractedBytes += data.byteLength;
+      if (extractedBytes > MAX_EXTRACTED_BYTES) {
+        throw new Error(
+          `Archive expands beyond the ${MAX_EXTRACTED_BYTES}-byte limit`,
+        );
+      }
       await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, entry.extraction ?? new Uint8Array());
+      await writeFile(target, data);
     }
   }
 

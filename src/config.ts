@@ -27,15 +27,35 @@ function idleTimeoutFromEnvironment(value: string | undefined): number {
   return Math.min(255, Math.max(0, Math.trunc(parsed)));
 }
 
+function isLoopbackHost(host: string): boolean {
+  const normalized = host
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1"
+  );
+}
+
 export function loadConfig(environment = process.env): AppConfig {
   const appDir =
     environment.APP_DIR ??
     (process.cwd() === "/app" ? "/app" : `${process.cwd()}/app`);
   const configDir = environment.CONFIG_DIR ?? `${appDir}/config`;
+  const host = environment.HOST ?? "localhost";
+  const rulesToken = environment.RULES_TOKEN || undefined;
+
+  if (!rulesToken && !isLoopbackHost(host)) {
+    throw new Error(
+      "RULES_TOKEN must be set when HOST is not a loopback address",
+    );
+  }
 
   return {
     appDir,
-    host: environment.HOST ?? "localhost",
+    host,
     port: Number(environment.PORT ?? "3000"),
     configDir,
     rulesFile: environment.RULES_FILE ?? `${configDir}/rules.yml`,
@@ -50,6 +70,6 @@ export function loadConfig(environment = process.env): AppConfig {
     idleTimeoutSeconds: idleTimeoutFromEnvironment(
       environment.IDLE_TIMEOUT_SECONDS,
     ),
-    rulesToken: environment.RULES_TOKEN || undefined,
+    rulesToken,
   };
 }
