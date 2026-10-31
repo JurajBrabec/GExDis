@@ -335,7 +335,7 @@ export const editorPage = `<!doctype html>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const SESSION_KEY = 'gexdis.rules.token';
+  const TOKEN_KEY = 'gexdis.rules.token';
   const BUILTINS = ['SEMVER', 'DOWNLOADED', 'UNPACKED'];
   const GITHUB_CAPTURES = ['ORG', 'REPO', 'TAG'];
   const SEMVER_SRC = 'v?(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)';
@@ -367,7 +367,39 @@ export const editorPage = `<!doctype html>
     lastInput: null,
     search: '',
   };
-  let token = sessionStorage.getItem(SESSION_KEY) || '';
+
+  function loadStoredToken() {
+    try {
+      const saved = localStorage.getItem(TOKEN_KEY);
+      if (saved !== null) return saved;
+
+      // Upgrade tokens saved by earlier editor versions, which used tab-scoped storage.
+      const legacy = sessionStorage.getItem(TOKEN_KEY) || '';
+      if (legacy) {
+        localStorage.setItem(TOKEN_KEY, legacy);
+        sessionStorage.removeItem(TOKEN_KEY);
+      }
+      return legacy;
+    } catch {
+      return sessionStorage.getItem(TOKEN_KEY) || '';
+    }
+  }
+
+  function storeToken(value) {
+    try {
+      if (value) localStorage.setItem(TOKEN_KEY, value);
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch (error) {
+      console.warn('Could not persist the rules token in local storage:', error);
+    }
+    try {
+      sessionStorage.removeItem(TOKEN_KEY);
+    } catch {
+      // Storage may be disabled by the browser; the token still works this session.
+    }
+  }
+
+  let token = loadStoredToken();
   $('token').value = token;
 
   function el(tag, props, children) {
@@ -591,8 +623,7 @@ export const editorPage = `<!doctype html>
   async function connect() {
     token = $('token').value.trim();
     clearBanner();
-    if (token) sessionStorage.setItem(SESSION_KEY, token);
-    else sessionStorage.removeItem(SESSION_KEY);
+    storeToken(token);
     if (state.connected && !(await allowDiscard(true, true))) return;
     setStatus('Loading…', 'none');
     try {

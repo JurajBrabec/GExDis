@@ -79,7 +79,7 @@ The `gexdis` service builds the production [`Dockerfile`](Dockerfile), runs the 
 
 - `HOST` defaults to `localhost`. If `HOST` is anything other than `localhost`, `127.0.0.1`, or `::1`, startup requires `RULES_TOKEN`.
 - When configured, the token protects `/process`, `/status/:id`, `/api/rules`, and `/api/github/assets`. Send it in `x-rules-token` or `Authorization: Bearer ...`. Tokens in query strings are not accepted.
-- `/editor` serves static HTML. Enter the token in the editor's Rules token field to use its API. The editor sends the token in a request header.
+- `/editor` serves static HTML. Enter the token in the editor's Rules token field to use its API. The editor saves it in this browser's `localStorage`, sends it in a request header, and reconnects automatically on later visits. Clear the field and connect to remove the saved token.
 - A local loopback bind without a token is convenient for development, not a safe setting to expose through a reverse proxy or other network forwarding. Configure a token whenever access could be remote.
 - `/app/...` copy targets resolve under `APP_DIR`, and remove rules are scoped to one literal direct child directory under `/app`. Non-`/app/` copy targets are used as configured, so rule files and rule-edit credentials are privileged.
 - GExDis downloads files but does not validate release signatures or checksums. Configure trusted sources and add artifact verification appropriate to your deployment.

@@ -212,6 +212,8 @@ test("/editor serves the editor page HTML", async () => {
   expect(response.headers.get("content-type")).toContain("text/html");
   const html = await response.text();
   expect(html).toContain("rules.yml");
+  expect(html).toContain("localStorage.getItem(TOKEN_KEY)");
+  expect(html).toContain("if (token) connect();");
 });
 
 const COMMENTED_RULES = `# keep me
