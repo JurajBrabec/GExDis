@@ -2,11 +2,29 @@ import type { ActionResult } from './processor.ts';
 
 export type JobStatus = 'running' | 'completed' | 'failed';
 
+export type JobPhase =
+  | 'queued'
+  | 'downloading'
+  | 'removing'
+  | 'unpacking'
+  | 'copying'
+  | 'completed'
+  | 'failed';
+
+export interface JobProgress {
+  phase: JobPhase;
+  current: number;
+  total: number;
+  file?: string;
+  message: string;
+}
+
 export interface Job {
   id: string;
   variant: string;
   url: string;
   status: JobStatus;
+  progress: JobProgress;
   actions: ActionResult[];
   error?: string;
   createdAt: number;
@@ -26,6 +44,12 @@ export class JobStore {
       variant,
       url,
       status: 'running',
+      progress: {
+        phase: 'queued',
+        current: 0,
+        total: 0,
+        message: 'Job queued',
+      },
       actions: [],
       createdAt: now,
       updatedAt: now,
@@ -39,10 +63,22 @@ export class JobStore {
     return this.jobs.get(id);
   }
 
+  updateProgress(id: string, progress: JobProgress): void {
+    const job = this.jobs.get(id);
+    if (!job) return;
+    job.progress = progress;
+    job.updatedAt = Date.now();
+  }
+
   complete(id: string): void {
     const job = this.jobs.get(id);
     if (!job) return;
     job.status = 'completed';
+    job.progress = {
+      ...job.progress,
+      phase: 'completed',
+      message: 'All files processed',
+    };
     job.updatedAt = Date.now();
   }
 
@@ -51,6 +87,11 @@ export class JobStore {
     if (!job) return;
     job.status = 'failed';
     job.error = error;
+    job.progress = {
+      ...job.progress,
+      phase: 'failed',
+      message: error,
+    };
     job.updatedAt = Date.now();
   }
 

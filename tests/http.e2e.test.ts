@@ -13,6 +13,7 @@ afterEach(async () => {
 interface JobResponse {
   id: string;
   status: "running" | "completed" | "failed";
+  progress?: { phase: string; current?: number; total?: number };
   actions: Array<{ status: string }>;
   error?: string;
 }
@@ -90,19 +91,41 @@ test("processes a GitHub URL through the HTTP handler end to end", async () => {
   requestUrl.searchParams.set("dry_run", "true");
   const dryResponse = await handleRequest(new Request(requestUrl));
   expect(dryResponse.status).toBe(200);
-  expect(
-    (await dryResponse.json()).map(
-      (action: { status: string }) => action.status,
-    ),
-  ).toEqual(["planned"]);
+  const dryResult = (await dryResponse.json()) as {
+    status: string;
+    phase: string;
+    count: number;
+    actions: Array<{ status: string }>;
+  };
+  expect(dryResult.status).toBe("ready");
+  expect(dryResult.phase).toBe("check");
+  expect(dryResult.count).toBe(1);
+  expect(dryResult.actions.map((action) => action.status)).toEqual(["planned"]);
   expect(assetFetches).toBe(0);
 
+  requestUrl.searchParams.set("url", "https://example.com/releases/tag/v1");
+  const disabledResponse = await handleRequest(new Request(requestUrl));
+  expect(disabledResponse.status).toBe(400);
+  const disabled = (await disabledResponse.json()) as {
+    status: string;
+    phase: string;
+    reason: string;
+  };
+  expect(disabled.status).toBe("disabled");
+  expect(disabled.phase).toBe("check");
+  expect(disabled.reason).toContain("host is not allowed");
+
+  requestUrl.searchParams.set(
+    "url",
+    "https://github.com/acme/tool/releases/tag/v1",
+  );
   requestUrl.searchParams.delete("dry_run");
   const response = await handleRequest(new Request(requestUrl));
   expect(response.status).toBe(202);
   const { statusUrl } = (await response.json()) as { statusUrl: string };
   const job = await pollJob(handleRequest, statusUrl);
   expect(job.status).toBe("completed");
+  expect(job.progress?.phase).toBe("completed");
   expect(job.actions.map((action) => action.status)).toEqual([
     "downloaded",
     "copied",

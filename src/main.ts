@@ -41,6 +41,23 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+function processError(message: string, status: number, dryRun: boolean): Response {
+  if (dryRun) {
+    return json(
+      {
+        status: "disabled",
+        phase: "check",
+        reason: message,
+        error: message,
+        count: 0,
+        actions: [],
+      },
+      status,
+    );
+  }
+  return json({ error: message }, status);
+}
+
 async function handleStatus(id: string): Promise<Response> {
   const job = jobs.get(id);
   if (!job) {
@@ -263,6 +280,8 @@ async function handleReleaseAssets(request: Request, url: URL): Promise<Response
 
 export async function handleRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
+  const dryRun =
+    config.dryRun || url.searchParams.get("dry_run")?.toLowerCase() === "true";
   await logger.info("Request received", {
     method: request.method,
     path: url.pathname,
@@ -306,19 +325,19 @@ export async function handleRequest(request: Request): Promise<Response> {
   // Validate that either url or org+repo is provided
   if (!source && !(org && repo)) {
     await logger.warn("Request missing url or org+repo parameters");
-    return json(
-      {
-        error: "Either 'url' or both 'org' and 'repo' parameters are required",
-      },
+    return processError(
+      "Either 'url' or both 'org' and 'repo' parameters are required",
       400,
+      dryRun,
     );
   }
 
   if (source && (org || repo)) {
     await logger.warn("Request has both url and org/repo parameters");
-    return json(
-      { error: "Cannot specify both 'url' and 'org'/'repo' parameters" },
+    return processError(
+      "Cannot specify both 'url' and 'org'/'repo' parameters",
       400,
+      dryRun,
     );
   }
 
@@ -343,23 +362,33 @@ export async function handleRequest(request: Request): Promise<Response> {
     const parsed = new URL(sourceUrl);
     if (!/^https?:$/.test(parsed.protocol)) {
       await logger.warn("Request URL has unsupported protocol");
-      return json({ error: "The url must use HTTP or HTTPS" }, 400);
+      return processError("The url must use HTTP or HTTPS", 400, dryRun);
     }
   } catch {
     await logger.warn("Request URL is invalid");
-    return json({ error: "The url query parameter is invalid" }, 400);
+    return processError("The url query parameter is invalid", 400, dryRun);
   }
 
   if (!isAllowedUrl(sourceUrl)) {
     await logger.warn("Request URL host is not allowed");
-    return json({ error: "The supplied host is not allowed" }, 400);
+    return processError("The supplied host is not allowed", 400, dryRun);
   }
 
-  const rules = await loadRules(config.rulesFile, defaultRules);
+  let rules: Awaited<ReturnType<typeof loadRules>>;
+  try {
+    rules = await loadRules(config.rulesFile, defaultRules);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unable to load download rules";
+    await logger.error("Unable to load rules for process request", {
+      error: message,
+    });
+    return processError(message, 422, dryRun);
+  }
   const selected = selectVariant(sourceUrl, rules);
   if (!selected) {
     await logger.warn("No variant matched request URL");
-    return json({ error: "No variant matches the supplied URL" }, 404);
+    return processError("No variant matches the supplied URL", 404, dryRun);
   }
 
   try {
@@ -370,9 +399,10 @@ export async function handleRequest(request: Request): Promise<Response> {
       await logger.warn("Source page returned an error", {
         status: response.status,
       });
-      return json(
-        { error: `Source page returned HTTP ${response.status}` },
+      return processError(
+        `Source page returned HTTP ${response.status}`,
         422,
+        dryRun,
       );
     }
     // Re-derive the page URL once redirects (e.g. /releases/latest) resolve, refetching if it changed.
@@ -384,9 +414,10 @@ export async function handleRequest(request: Request): Promise<Response> {
         await logger.warn("Source page returned an error", {
           status: response.status,
         });
-        return json(
-          { error: `Source page returned HTTP ${response.status}` },
+        return processError(
+          `Source page returned HTTP ${response.status}`,
           422,
+          dryRun,
         );
       }
     }
@@ -416,13 +447,10 @@ export async function handleRequest(request: Request): Promise<Response> {
       await logger.info("No actionable links found", {
         variant: selected.variant.name,
       });
-      return json({ error: "No actionable links found", actions: [] }, 422);
+      return processError("No actionable links found", 422, dryRun);
     }
 
-    if (
-      config.dryRun ||
-      url.searchParams.get("dry_run")?.toLowerCase() === "true"
-    ) {
+    if (dryRun) {
       const actions = downloads.map((link) => ({
         variant: selected.variant.name,
         url: link.url,
@@ -442,7 +470,25 @@ export async function handleRequest(request: Request): Promise<Response> {
         variant: selected.variant.name,
         count: actions.length,
       });
-      return json(actions);
+      if (config.dryRun) {
+        const reason = "Downloads are disabled because GExDis is configured for dry-run mode";
+        return json(
+          {
+            status: "disabled",
+            phase: "check",
+            reason,
+            count: actions.length,
+            actions,
+          },
+          503,
+        );
+      }
+      return json({
+        status: "ready",
+        phase: "check",
+        count: actions.length,
+        actions,
+      });
     }
 
     const job = jobs.create(selected.variant.name, sourceUrl);
@@ -469,6 +515,7 @@ export async function handleRequest(request: Request): Promise<Response> {
           config,
           logger,
           job.actions,
+          (progress) => jobs.updateProgress(job.id, progress),
         );
         jobs.complete(job.id);
         await logger.info("Request completed", {
@@ -483,19 +530,22 @@ export async function handleRequest(request: Request): Promise<Response> {
       }
     })();
     return json(
-      { id: job.id, status: job.status, statusUrl: `/status/${job.id}` },
+      {
+        id: job.id,
+        status: job.status,
+        progress: job.progress,
+        statusUrl: `/status/${job.id}`,
+      },
       202,
     );
   } catch (error) {
     await logger.error("Request processing failed", {
       error: error instanceof Error ? error.message : "Unknown error",
     });
-    return json(
-      {
-        error:
-          error instanceof Error ? error.message : "Unable to process request",
-      },
+    return processError(
+      error instanceof Error ? error.message : "Unable to process request",
       422,
+      dryRun,
     );
   }
 }
