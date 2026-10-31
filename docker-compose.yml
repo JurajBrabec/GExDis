@@ -13,7 +13,7 @@ services:
       # LOG_RETENTION_DAYS: 30
       # PORT: 3000
       # RELEASE_DIR: /app/release
-      # RULES_TOKEN: change-me
+      RULES_TOKEN: "${RULES_TOKEN:?Set RULES_TOKEN before starting GExDis}"
       # TMP_DIR: /app/tmp
     image: jurajbrabec/gexdis:latest
     ports:
@@ -37,7 +37,7 @@ services:
     environment:
       HOST: 0.0.0.0
       # PORT: 3000
-      # RULES_TOKEN: change-me
+      RULES_TOKEN: "${RULES_TOKEN:?Set RULES_TOKEN before starting GExDis}"
     image: jurajbrabec/gexdis:dev
     ports:
       - "3000:3000"

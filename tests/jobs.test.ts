@@ -18,6 +18,17 @@ test('creates a running job with a shared, mutable actions array', () => {
   expect(store.get(job.id)?.actions).toHaveLength(1);
 });
 
+test('counts only active jobs', () => {
+  const store = new JobStore();
+  const active = store.create('github', 'https://github.com/acme/active');
+  const completed = store.create('github', 'https://github.com/acme/completed');
+  store.complete(completed.id);
+
+  expect(store.runningCount).toBe(1);
+  store.fail(active.id, 'boom');
+  expect(store.runningCount).toBe(0);
+});
+
 test('completes and fails jobs', () => {
   const store = new JobStore();
   const completed = store.create('github', 'https://github.com/acme/tool');

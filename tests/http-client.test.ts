@@ -1,5 +1,9 @@
 import { afterEach, expect, mock, test } from 'bun:test';
-import { fetchAllowed } from '../src/http-client.ts';
+import {
+  fetchAllowed,
+  readResponseBytes,
+  readResponseText,
+} from '../src/http-client.ts';
 
 const originalFetch = globalThis.fetch;
 
@@ -34,5 +38,23 @@ test('rejects redirects to unapproved hosts', async () => {
   ) as unknown as typeof fetch;
   await expect(fetchAllowed('https://github.com/acme/start')).rejects.toThrow(
     'Request host is not allowed',
+  );
+});
+
+test('reads bounded response bodies and rejects oversized content', async () => {
+  const body = await readResponseText(new Response('small body'), 16, 'Page');
+  expect(body).toBe('small body');
+
+  await expect(
+    readResponseBytes(new Response('too large'), 4, 'Download'),
+  ).rejects.toThrow('Download exceeds the 4-byte limit');
+});
+
+test('rejects oversized responses from their content-length header', async () => {
+  const response = new Response('ignored', {
+    headers: { 'content-length': '100' },
+  });
+  await expect(readResponseBytes(response, 10, 'Page')).rejects.toThrow(
+    'Page exceeds the 10-byte limit',
   );
 });

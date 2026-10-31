@@ -175,12 +175,34 @@ test("rules endpoints require the token when RULES_TOKEN is set", async () => {
   );
   expect(put.status).toBe(401);
 
+  const queryToken = await handleRequest(
+    new Request("http://localhost/api/rules?token=secret"),
+  );
+  expect(queryToken.status).toBe(401);
+
+  const processDenied = await handleRequest(
+    new Request("http://localhost/process"),
+  );
+  expect(processDenied.status).toBe(401);
+
+  const statusDenied = await handleRequest(
+    new Request("http://localhost/status/unknown"),
+  );
+  expect(statusDenied.status).toBe(401);
+
   const goodGet = await handleRequest(
     new Request("http://localhost/api/rules", {
       headers: { "x-rules-token": "secret" },
     }),
   );
   expect(goodGet.status).toBe(200);
+
+  const processAllowed = await handleRequest(
+    new Request("http://localhost/process", {
+      headers: { "x-rules-token": "secret" },
+    }),
+  );
+  expect(processAllowed.status).toBe(400);
 });
 
 test("/editor serves the editor page HTML", async () => {

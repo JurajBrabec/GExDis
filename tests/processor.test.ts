@@ -558,7 +558,12 @@ test("reports a remove rule that escapes /app subdir as a failed action", async 
       url: "url",
       get: ["\\.exe$"],
       copy: [],
-      remove: ["^/bin/tool\\.exe$", "^/app/tool\\.exe$", "^/etc/passwd$"],
+      remove: [
+        "^/bin/tool\\.exe$",
+        "^/app/tool\\.exe$",
+        "^/etc/passwd$",
+        "^/app/../outside/passwd$",
+      ],
     },
     [{ ...link, captures: {} }],
     {},
@@ -569,6 +574,41 @@ test("reports a remove rule that escapes /app subdir as a failed action", async 
 
   expect(actions.find((a) => a.status === "failed")?.error).toContain(
     "must target a single /app/{subdir}/ folder",
+  );
+});
+
+test("rejects copy targets that escape the app directory", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gexdis-processor-"));
+  temporaryDirectories.push(directory);
+  const tempDir = join(directory, "tmp");
+  const appDir = join(directory, "app");
+  const logger = new Logger(join(directory, "log"));
+  const variant = new GitHubReleaseVariant(defaultRules.github);
+  const link = {
+    url: "https://github.com/acme/tool/releases/download/v1/tool.exe",
+    path: "/tool.exe",
+  };
+  globalThis.fetch = mock(() =>
+    Promise.resolve(new Response("binary")),
+  ) as unknown as typeof fetch;
+
+  const actions = await processDownloads(
+    variant,
+    {
+      name: "test",
+      url: "url",
+      get: ["\\.exe$"],
+      copy: ["^tool\\.exe$:/app/../outside/tool.exe"],
+    },
+    [{ ...link, captures: {} }],
+    {},
+    { tempDir, appDir },
+    logger,
+  );
+
+  expect(actions.some((action) => action.status === "failed")).toBe(true);
+  expect(await Bun.file(join(directory, "outside", "tool.exe")).exists()).toBe(
+    false,
   );
 });
 

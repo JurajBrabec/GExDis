@@ -1,5 +1,13 @@
 import { copyFile, cp, mkdir, readdir, rm, stat } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { extractArchive, isArchive } from "./archive.ts";
 import {
   expandPlaceholders,
@@ -11,7 +19,11 @@ import {
 import type { DownloadLink, PageLink, Variant } from "./variants.ts";
 import { isAllowedUrl } from "./variants.ts";
 import { Logger } from "./logger.ts";
-import { fetchAllowed } from "./http-client.ts";
+import {
+  fetchAllowed,
+  MAX_DOWNLOAD_BYTES,
+  readResponseBytes,
+} from "./http-client.ts";
 
 export interface ActionResult {
   variant: string;
@@ -250,9 +262,18 @@ function matchCandidate(
 }
 
 function targetPath(target: string, appDir: string): string {
-  return target.startsWith("/app/")
-    ? join(appDir, target.slice("/app/".length))
-    : target;
+  if (!target.startsWith("/app/")) return target;
+  const appRoot = resolve(appDir);
+  const mapped = resolve(appRoot, target.slice("/app/".length));
+  const fromRoot = relative(appRoot, mapped);
+  if (
+    fromRoot === ".." ||
+    fromRoot.startsWith(`..${sep}`) ||
+    isAbsolute(fromRoot)
+  ) {
+    throw new Error("Copy target must remain inside /app");
+  }
+  return mapped;
 }
 
 async function filesUnder(root: string): Promise<string[]> {
@@ -288,8 +309,22 @@ function resolveRemoveScope(
   const match = /^\^?\/app\/([^/]+)\//.exec(pattern);
   if (!match) return undefined;
   const subdir = match[1];
+  // The scope is a literal, single child directory, not a regex path. In
+  // particular, reject traversal segments before resolving against appDir.
+  if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(subdir)) return undefined;
+  const appRoot = resolve(appDir);
+  const root = resolve(appRoot, subdir);
+  const fromRoot = relative(appRoot, root);
+  if (
+    !fromRoot ||
+    fromRoot === ".." ||
+    fromRoot.startsWith(`..${sep}`) ||
+    isAbsolute(fromRoot)
+  ) {
+    return undefined;
+  }
   return {
-    root: resolve(join(appDir, subdir)),
+    root,
     subdir,
   };
 }
@@ -688,7 +723,10 @@ export async function processDownloads(
       if (!response.ok) {
         throw new Error(`Download returned HTTP ${response.status}`);
       }
-      await Bun.write(temporaryPath, await response.arrayBuffer());
+      await Bun.write(
+        temporaryPath,
+        await readResponseBytes(response, MAX_DOWNLOAD_BYTES, "Download"),
+      );
       fileCaptures.DOWNLOADED = name;
       actions.push({
         variant: variant.name,

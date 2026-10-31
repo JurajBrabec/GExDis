@@ -63,6 +63,14 @@ export class JobStore {
     return this.jobs.get(id);
   }
 
+  get runningCount(): number {
+    let count = 0;
+    for (const job of this.jobs.values()) {
+      if (job.status === 'running') count += 1;
+    }
+    return count;
+  }
+
   updateProgress(id: string, progress: JobProgress): void {
     const job = this.jobs.get(id);
     if (!job) return;

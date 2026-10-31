@@ -1,6 +1,10 @@
 import { loadConfig } from "./config.ts";
 import { Logger } from "./logger.ts";
-import { fetchAllowed } from "./http-client.ts";
+import {
+  fetchAllowed,
+  MAX_PAGE_BYTES,
+  readResponseText,
+} from "./http-client.ts";
 import { processDownloads } from "./processor.ts";
 import {
   loadRules,
@@ -31,6 +35,7 @@ const logger = new Logger(
   config.logRetentionDays,
 );
 const jobs = new JobStore();
+const MAX_ACTIVE_JOBS = 4;
 await loadRules(config.rulesFile, defaultRules);
 await logger.info("Rules loaded", { rulesFile: config.rulesFile });
 
@@ -66,15 +71,15 @@ async function handleStatus(id: string): Promise<Response> {
   return json(job);
 }
 
-// Returns a collision-free message when the request is missing/mismatching the
-// rules-edit token, or undefined when the request is authorized.
+// Returns a message when the request is missing/mismatching the API token, or
+// undefined when the request is authorized. Tokens are accepted only in headers
+// to avoid leaking them through URLs, browser history, and proxy access logs.
 function rulesTokenError(request: Request): string | undefined {
   if (!config.rulesToken) return undefined;
   const presented =
     request.headers.get("x-rules-token") ??
-    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-    new URL(request.url).searchParams.get("token");
-  if (!presented) return "The rules API requires a token";
+    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!presented) return "This API requires a token";
   if (presented !== config.rulesToken) return "The supplied token is invalid";
   return undefined;
 }
@@ -167,7 +172,7 @@ async function handleValidate(request: Request): Promise<Response> {
 async function authorizeRules(request: Request): Promise<Response | undefined> {
   const tokenError = rulesTokenError(request);
   if (!tokenError) return undefined;
-  await logger.warn("Rules API authorization failed", { error: tokenError });
+  await logger.warn("API authorization failed", { error: tokenError });
   return json({ error: tokenError }, 401);
 }
 
@@ -260,7 +265,10 @@ async function handleReleaseAssets(request: Request, url: URL): Promise<Response
     if (!response.ok) {
       return json({ error: `GitHub returned HTTP ${response.status}` }, 422);
     }
-    const links = variant.extractLinks(resolvedUrl, await response.text());
+    const links = variant.extractLinks(
+      resolvedUrl,
+      await readResponseText(response, MAX_PAGE_BYTES, "Release page"),
+    );
     const assets = [
       ...new Set(
         links
@@ -287,10 +295,6 @@ export async function handleRequest(request: Request): Promise<Response> {
     path: url.pathname,
   });
 
-  if (url.pathname.startsWith("/status/")) {
-    return handleStatus(url.pathname.slice("/status/".length));
-  }
-
   if (url.pathname.startsWith("/api/rules")) {
     if (request.method === "GET") return handleRulesApi(request, url);
     return serializeRulesChange(() => handleRulesApi(request, url));
@@ -300,6 +304,12 @@ export async function handleRequest(request: Request): Promise<Response> {
     const denied = await authorizeRules(request);
     if (denied) return denied;
     return handleReleaseAssets(request, url);
+  }
+
+  if (url.pathname.startsWith("/status/")) {
+    const denied = await authorizeRules(request);
+    if (denied) return denied;
+    return handleStatus(url.pathname.slice("/status/".length));
   }
 
   if (url.pathname === "/editor") {
@@ -315,6 +325,9 @@ export async function handleRequest(request: Request): Promise<Response> {
     await logger.warn("Request method not allowed", { method: request.method });
     return json({ error: "Method not allowed" }, 405);
   }
+
+  const denied = await authorizeRules(request);
+  if (denied) return denied;
 
   // Accept either url parameter or org+repo+tag parameters
   let source = url.searchParams.get("url");
@@ -423,7 +436,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
     const links = selected.variant.extractLinks(
       resolvedUrl,
-      await response.text(),
+      await readResponseText(response, MAX_PAGE_BYTES, "Release page"),
     );
     const captures = applySetVariables(selected.rule, {
       ...selected.captures,
@@ -489,6 +502,10 @@ export async function handleRequest(request: Request): Promise<Response> {
         count: actions.length,
         actions,
       });
+    }
+
+    if (jobs.runningCount >= MAX_ACTIVE_JOBS) {
+      return processError("The service is at its active job limit", 503, dryRun);
     }
 
     const job = jobs.create(selected.variant.name, sourceUrl);

@@ -16,7 +16,7 @@ GEXDIS: a Bun HTTP service that scrapes a release/link page, downloads matching 
 - `src/main.ts` is the entrypoint and has top-level side effects: it loads config and rules, then calls `Bun.serve` on import. Do not import it from non-test code.
 - Tests import it with a unique query suffix (`await import("../src/main.ts?tag")`) to get a fresh module and server. Tests set `PORT: "0"` and temp `APP_DIR`/`RULES_FILE` via `process.env`, and restore them afterward.
 - Routes: `GET /process?url=…` or `?org=…&repo=…&tag=…` (returns 202 with a job id; `dry_run=true` plans only), `GET /status/:id`, `GET /editor`.
-- Rules API, all under `/api/rules` and protected by `RULES_TOKEN` when set (accepted via `x-rules-token`, `Authorization: Bearer`, or `?token=`):
+- When `HOST` is not a loopback address, `RULES_TOKEN` is required at startup. When configured, it protects `/api/rules`, `/api/github/assets`, `/process`, and `/status/:id`; send it via `x-rules-token` or `Authorization: Bearer` (not in a URL):
   - `GET|PUT /api/rules` raw YAML. `PUT` validates, writes `rules.yml.bak` with the previous file, then replaces `rules.yml`.
   - `POST /api/rules/validate` checks raw YAML without writing.
   - `GET /api/rules/backup` → `{available}`; `POST /api/rules/undo` swaps `rules.yml` with the backup (undoing twice returns to the newer version).
