@@ -19,11 +19,12 @@
   "portsAttributes": {
     "3000": { "label": "gexdis", "onAutoForward": "notify" }
   },
-  // Runtime env mirrors docker-compose (and the production compose file).
-  // Uncomment / extend as needed.
+  // Runtime env mirrors docker-compose. Set RULES_TOKEN in the host environment
+  // before creating/starting this container; public binds fail closed without it.
   "containerEnv": {
     "HOST": "0.0.0.0",
-    "PORT": "3000"
+    "PORT": "3000",
+    "RULES_TOKEN": "${localEnv:RULES_TOKEN}"
     // "APP_DIR": "/workspace/app",
     // "CONFIG_DIR": "/workspace/app/config",
     // "RULES_FILE": "/workspace/app/config/rules.yml",

@@ -3,9 +3,11 @@
 // @namespace    Violentmonkey Scripts
 // @match        https://github.com/*/releases*
 // @grant        GM.xmlHttpRequest
+// @grant        GM.getValue
+// @grant        GM.setValue
 // @connect      nas.home
 // @connect      http://nas.home:10203
-// @version      2026.10.31
+// @version      2026.10.31.1
 // @author       NOiSE
 // @description  Send GitHub repository artefacts to GexDis downloader
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=github.com
@@ -21,11 +23,22 @@
     "#repo-content-pjax-container > div > div > div > div.Box-body > div.d-flex.flex-md-row.flex-column > div.d-flex.flex-row.flex-1.tmp-mb-3.wb-break-word > div.flex-1";
   const BUTTON_LABEL = "Download assets with GExDis";
   const BUTTON_BUSY_LABEL = "GExDis working…";
+  const TOKEN_BUTTON_LABEL = "🔑";
+  const TOKEN_STORAGE_KEY = "gexdisApiToken";
 
   // Backend API configuration
   const API_BASE = "http://nas.home:10203";
   const POLL_INTERVAL_MS = 2000; // how often to poll the status endpoint
   const MAX_POLL_ATTEMPTS = 60; // safety cap (~2 min at 2s interval)
+
+  let apiToken = "";
+  const apiTokenReady = GM.getValue(TOKEN_STORAGE_KEY, "")
+    .then((value) => {
+      apiToken = typeof value === "string" ? value.trim() : "";
+    })
+    .catch((err) => {
+      console.warn("Could not load the saved GExDis API token:", err);
+    });
 
   // --- Backend helpers -------------------------------------------------
 
@@ -34,18 +47,36 @@
   // Wraps GM.xmlHttpRequest in a Promise so we can use async/await.
   // GM.xmlHttpRequest bypasses CORS and mixed-content blocking, which
   // plain fetch() cannot do here (https github.com -> http nas.home).
-  function requestJson(url) {
+  async function requestJson(url) {
+    await apiTokenReady;
     return new Promise((resolve, reject) => {
       GM.xmlHttpRequest({
         method: "GET",
         url,
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          ...(apiToken ? { "x-rules-token": apiToken } : {}),
+        },
         onload: (res) => {
+          let body;
           try {
-            resolve(JSON.parse(res.responseText));
+            body = JSON.parse(res.responseText);
           } catch (err) {
-            reject(new Error(`Invalid JSON from ${url}: ${err.message}`));
+            if (res.status >= 200 && res.status < 300) {
+              reject(new Error(`Invalid JSON from ${url}: ${err.message}`));
+              return;
+            }
+            body = {};
           }
+          if (res.status < 200 || res.status >= 300) {
+            const error = new Error(
+              body.error || `GExDis returned HTTP ${res.status}`,
+            );
+            error.status = res.status;
+            reject(error);
+            return;
+          }
+          resolve(body);
         },
         onerror: () => reject(new Error(`Request failed: ${url}`)),
         ontimeout: () => reject(new Error(`Request timed out: ${url}`)),
@@ -158,6 +189,27 @@
     setStatus(reason, "error");
   }
 
+  async function configureApiToken() {
+    await apiTokenReady;
+    const value = window.prompt(
+      "GExDis API token (leave blank to clear it):",
+      apiToken,
+    );
+    if (value === null) return;
+
+    apiToken = value.trim();
+    try {
+      await GM.setValue(TOKEN_STORAGE_KEY, apiToken);
+      setStatus(
+        apiToken ? "API token saved. Checking this release…" : "API token cleared. Checking this release…",
+      );
+      await queryVariant();
+    } catch (err) {
+      console.error("Could not save the GExDis API token:", err);
+      setStatus(`Could not save API token: ${err.message || err}`, "error");
+    }
+  }
+
   function displayProgress(progress) {
     if (!progress) return;
     const phaseLabels = {
@@ -201,7 +253,11 @@
     } catch (err) {
       console.error("queryVariant failed:", err);
       gexdisDownloads = 0;
-      setButtonDisabled(`Availability check failed: ${err.message || err}`);
+      setButtonDisabled(
+        err.status === 401
+          ? "API token required or invalid. Use the key button to set it."
+          : `Availability check failed: ${err.message || err}`,
+      );
     }
   }
 
@@ -262,7 +318,12 @@
       }
     } catch (err) {
       console.error("onButtonClick failed:", err);
-      setStatus(`Download status unavailable: ${err.message || err}`, "error");
+      setStatus(
+        err.status === 401
+          ? "API token required or invalid. Use the key button to set it."
+          : `Download status unavailable: ${err.message || err}`,
+        "error",
+      );
     } finally {
       if (!keepDisabled) setButtonBusy(false);
     }
@@ -295,6 +356,19 @@
     anchor.title = "Open GExDis editor";
     anchor.type = "button";
 
+    const tokenButton = document.createElement("button");
+    tokenButton.addEventListener("click", configureApiToken);
+    tokenButton.classList.add(
+      "Button--secondary",
+      "Button--small",
+      "Button",
+      "v-align-text-bottom",
+    );
+    tokenButton.dataset.viewComponent = "true";
+    tokenButton.textContent = TOKEN_BUTTON_LABEL;
+    tokenButton.title = "Set or clear the GExDis API token";
+    tokenButton.type = "button";
+
     const button = document.createElement("button");
     button.addEventListener("click", onButtonClick);
     button.classList.add(
@@ -315,6 +389,7 @@
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
 
+    span.appendChild(tokenButton);
     span.appendChild(anchor);
     span.appendChild(button);
     span.appendChild(actions);
