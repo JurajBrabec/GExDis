@@ -1532,13 +1532,15 @@ export const editorPage = `<!doctype html>
     try {
       const res = await api('/process?url=' + encodeURIComponent(url) + '&dry_run=true');
       const body = await res.text();
-      let pretty;
-      try { pretty = JSON.stringify(JSON.parse(body), null, 2); } catch { pretty = body; }
-      if (!res.ok) {
-        setStatus('No match', 'bad');
+      let result;
+      try { result = JSON.parse(body); } catch { result = null; }
+      const pretty = result ? JSON.stringify(result, null, 2) : body;
+      if (!res.ok || result?.status === 'disabled') {
+        setStatus(result?.status === 'disabled' ? 'Disabled' : 'No match', 'bad');
         showBanner('error', 'No rule matched:\\n' + pretty);
       } else {
-        setStatus('Matched', 'ok');
+        const count = result?.count ?? result?.actions?.length;
+        setStatus(count === undefined ? 'Matched' : 'Matched · ' + count + ' asset' + (count === 1 ? '' : 's'), 'ok');
         showBanner('success', 'Match OK:\\n' + pretty);
       }
     } catch (error) {

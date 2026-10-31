@@ -32,6 +32,14 @@ export interface ActionResult {
   copied?: number;
 }
 
+export interface ProcessorProgress {
+  phase: "downloading" | "removing" | "unpacking" | "copying";
+  current: number;
+  total: number;
+  file: string;
+  message: string;
+}
+
 interface ProcessorConfig {
   tempDir: string;
   appDir: string;
@@ -643,6 +651,7 @@ export async function processDownloads(
   config: ProcessorConfig,
   logger: Logger,
   actions: ActionResult[] = [],
+  onProgress?: (progress: ProcessorProgress) => void,
 ): Promise<ActionResult[]> {
   await mkdir(config.tempDir, { recursive: true });
 
@@ -651,8 +660,19 @@ export async function processDownloads(
   // zip link), so per-link tracking would produce false failures.
   const copyRuleTracker = createCopyRuleTracker();
   const removeRuleTracker = createRemoveRuleTracker();
-  for (const link of links) {
+  for (const [index, link] of links.entries()) {
     const name = safeName(link);
+    const reportProgress = (
+      phase: ProcessorProgress["phase"],
+      message: string,
+    ) =>
+      onProgress?.({
+        phase,
+        current: index + 1,
+        total: links.length,
+        file: name,
+        message,
+      });
     const temporaryPath = join(
       config.tempDir,
       `${crypto.randomUUID()}-${name}`,
@@ -660,6 +680,7 @@ export async function processDownloads(
     const itemRoot = `${temporaryPath}-contents`;
     const fileCaptures: Record<string, string> = { ...link.captures };
     try {
+      reportProgress("downloading", `Downloading ${name}`);
       if (!isAllowedUrl(link.url)) {
         throw new Error("Download host is not allowed");
       }
@@ -685,6 +706,9 @@ export async function processDownloads(
       // Remove rules run once per link, before any copy, so they clean up
       // pre-existing files (e.g. older versions) without touching files that
       // the current run just copied.
+      if (rule.remove?.length) {
+        reportProgress("removing", `Applying cleanup rules for ${name}`);
+      }
       await removeMatching(
         variant,
         link,
@@ -706,6 +730,7 @@ export async function processDownloads(
               .matched,
         );
       if (isArchive(name) && rule.unpack && matchedUnpackRule) {
+        reportProgress("unpacking", `Unpacking ${name}`);
         const extracted = await extractArchive(temporaryPath, itemRoot);
         const unpacked = stripUuidPrefix(
           relative(config.tempDir, extracted.root).replaceAll("\\", "/"),
@@ -727,6 +752,7 @@ export async function processDownloads(
           url: link.url,
           root: extracted.root,
         });
+        reportProgress("copying", `Copying extracted files from ${name}`);
         await copyMatching(
           variant,
           link,
@@ -753,6 +779,7 @@ export async function processDownloads(
           copyRuleTracker,
         );
       }
+      reportProgress("copying", `Applying copy rules for ${name}`);
       await copyMatching(
         variant,
         link,

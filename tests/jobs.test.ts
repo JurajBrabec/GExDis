@@ -31,6 +31,34 @@ test('completes and fails jobs', () => {
   expect(job?.error).toBe('boom');
 });
 
+test('stores the latest processing phase and preserves it on completion', () => {
+  const store = new JobStore();
+  const job = store.create('github', 'https://github.com/acme/tool');
+
+  store.updateProgress(job.id, {
+    phase: 'downloading',
+    current: 2,
+    total: 4,
+    file: 'tool.zip',
+    message: 'Downloading tool.zip',
+  });
+  expect(store.get(job.id)?.progress).toEqual({
+    phase: 'downloading',
+    current: 2,
+    total: 4,
+    file: 'tool.zip',
+    message: 'Downloading tool.zip',
+  });
+
+  store.complete(job.id);
+  expect(store.get(job.id)?.progress).toMatchObject({
+    phase: 'completed',
+    current: 2,
+    total: 4,
+    file: 'tool.zip',
+  });
+});
+
 test('returns undefined for an unknown job id', () => {
   const store = new JobStore();
   expect(store.get('missing')).toBeUndefined();
