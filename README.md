@@ -73,7 +73,18 @@ The `gexdis` service builds the production [`Dockerfile`](Dockerfile), runs the 
 
 ## GitHub userscript
 
-[`user-script/gexdis-github.js`](user-script/gexdis-github.js) adds a GExDis button to GitHub release pages. It checks matching assets with a dry run, starts a download job, and polls its status. When the server requires authentication, click the **🔑** button, enter the API token, and retry. The token is saved in userscript-manager storage and sent in the `x-rules-token` header for the dry-run, process, and status requests; it is never added to the URL. The userscript currently targets `http://nas.home:10203`; if you change `API_BASE`, update the matching `@connect` metadata too.
+[`user-script/gexdis-github.js`](user-script/gexdis-github.js) adds a GExDis button to GitHub release pages. It checks matching assets with a dry run, starts a download job, and polls its status.
+
+Both settings are configured from the userscript menu in the userscript manager (for example, the Violentmonkey toolbar icon → this script), and stored in the manager's private storage:
+
+- **GExDis: set API base URL** — the GExDis server address, for example `http://nas.home:10203`. Leave the prompt empty to reset to the default.
+- **GExDis: set API key** — the server's `RULES_TOKEN`. Leave the prompt empty to clear it.
+
+The API key is sent in the `x-rules-token` header for dry-run, process, and status requests; it is never added to the URL. Without a configured key, the button shows a warning instead of calling the server.
+
+On the rules editor page (`/editor` of the configured API base), the userscript syncs the configured API key into the editor's saved token, so the editor connects automatically with the same credential. The editor's token field remains as a manual fallback for browsers where the userscript is not installed.
+
+If you configure a different API base host, the userscript may ask for network access to that host on its next request; grant it once, or add a matching `@connect` line to the script metadata to allow it permanently.
 
 ## Security model
 

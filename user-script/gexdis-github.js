@@ -2,12 +2,14 @@
 // @name         GitHub send to GExDis
 // @namespace    Violentmonkey Scripts
 // @match        https://github.com/*/releases*
+// @include      /^https?:\/\/[^/]+\/editor(?:[?#].*)?$/
 // @grant        GM.xmlHttpRequest
 // @grant        GM.getValue
 // @grant        GM.setValue
+// @grant        GM.registerMenuCommand
 // @connect      nas.home
 // @connect      http://nas.home:10203
-// @version      2026.10.31.1
+// @version      2026.11.01
 // @author       NOiSE
 // @description  Send GitHub repository artefacts to GexDis downloader
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=github.com
@@ -23,22 +25,143 @@
     "#repo-content-pjax-container > div > div > div > div.Box-body > div.d-flex.flex-md-row.flex-column > div.d-flex.flex-row.flex-1.tmp-mb-3.wb-break-word > div.flex-1";
   const BUTTON_LABEL = "Download assets with GExDis";
   const BUTTON_BUSY_LABEL = "GExDis working…";
-  const TOKEN_BUTTON_LABEL = "🔑";
-  const TOKEN_STORAGE_KEY = "gexdisApiToken";
 
-  // Backend API configuration
-  const API_BASE = "http://nas.home:10203";
+  // Settings live in the userscript manager's storage and are edited from its
+  // menu. The API key is sent as the x-rules-token header, never in a URL.
+  const DEFAULT_API_BASE = "http://nas.home:10203";
+  const API_BASE_STORAGE_KEY = "gexdisApiBase";
+  const API_TOKEN_STORAGE_KEY = "gexdisApiToken";
+  const EDITOR_TOKEN_STORAGE_KEY = "gexdis.rules.token";
+
   const POLL_INTERVAL_MS = 2000; // how often to poll the status endpoint
   const MAX_POLL_ATTEMPTS = 60; // safety cap (~2 min at 2s interval)
 
+  let apiBase = DEFAULT_API_BASE;
   let apiToken = "";
-  const apiTokenReady = GM.getValue(TOKEN_STORAGE_KEY, "")
-    .then((value) => {
-      apiToken = typeof value === "string" ? value.trim() : "";
+  const settingsReady = Promise.all([
+    GM.getValue(API_BASE_STORAGE_KEY, ""),
+    GM.getValue(API_TOKEN_STORAGE_KEY, ""),
+  ])
+    .then(([base, token]) => {
+      apiBase = normalizeApiBase(base) || DEFAULT_API_BASE;
+      apiToken = typeof token === "string" ? token.trim() : "";
     })
     .catch((err) => {
-      console.warn("Could not load the saved GExDis API token:", err);
+      console.warn("Could not load the saved GExDis settings:", err);
     });
+
+  function normalizeApiBase(value) {
+    if (typeof value !== "string") return "";
+    return value.trim().replace(/\/+$/, "");
+  }
+
+  function isValidApiBase(value) {
+    try {
+      const url = new URL(value);
+      return url.protocol === "http:" || url.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+
+  function isEditorPath() {
+    return /\/editor(?:[?#].*)?$/.test(location.href);
+  }
+
+  // The rules editor is served by the same origin as the configured API base.
+  function isEditorBridgePage() {
+    return isEditorPath() && editorOriginMatches();
+  }
+
+  function editorOriginMatches() {
+    try {
+      return new URL(apiBase).origin === location.origin;
+    } catch {
+      return false;
+    }
+  }
+
+  // --- Settings menu ----------------------------------------------------
+
+  function registerMenuCommands() {
+    if (typeof GM.registerMenuCommand !== "function") return;
+    GM.registerMenuCommand("GExDis: set API base URL", configureApiBase);
+    GM.registerMenuCommand("GExDis: set API key", configureApiKey);
+  }
+
+  async function configureApiBase() {
+    await settingsReady;
+    const value = window.prompt(
+      "GExDis API base URL (leave empty to reset to the default):",
+      apiBase,
+    );
+    if (value === null) return;
+
+    const normalized = normalizeApiBase(value);
+    if (normalized && !isValidApiBase(normalized)) {
+      window.alert(
+        `"${normalized}" is not a valid HTTP(S) base URL. Nothing was saved.`,
+      );
+      return;
+    }
+    apiBase = normalized || DEFAULT_API_BASE;
+    try {
+      await GM.setValue(API_BASE_STORAGE_KEY, apiBase);
+    } catch (err) {
+      console.error("Could not save the GExDis API base URL:", err);
+      window.alert(`Could not save the API base URL: ${err.message || err}`);
+      return;
+    }
+    await applySettingsChange();
+  }
+
+  async function configureApiKey() {
+    await settingsReady;
+    const value = window.prompt(
+      "GExDis API key (leave empty to clear it):",
+      apiToken,
+    );
+    if (value === null) return;
+
+    apiToken = value.trim();
+    try {
+      await GM.setValue(API_TOKEN_STORAGE_KEY, apiToken);
+    } catch (err) {
+      console.error("Could not save the GExDis API key:", err);
+      window.alert(`Could not save the API key: ${err.message || err}`);
+      return;
+    }
+    await applySettingsChange();
+  }
+
+  async function applySettingsChange() {
+    if (isEditorBridgePage()) {
+      await bridgeEditorToken();
+      return;
+    }
+    if (gexdisButton) await queryVariant();
+  }
+
+  // Keeps the rules editor's saved token in sync with the API key configured
+  // here, so both sides use the same credential. The editor reads its token
+  // when the page loads, so a reload is needed after the value changes.
+  async function bridgeEditorToken() {
+    if (!apiToken) return; // leave any manually saved editor token untouched
+    let stored;
+    try {
+      stored = localStorage.getItem(EDITOR_TOKEN_STORAGE_KEY);
+    } catch {
+      return; // storage unavailable; nothing to bridge
+    }
+    if (stored === apiToken) return;
+    try {
+      localStorage.setItem(EDITOR_TOKEN_STORAGE_KEY, apiToken);
+    } catch (err) {
+      console.warn("Could not sync the GExDis API key to the editor:", err);
+      return;
+    }
+    location.reload();
+  }
 
   // --- Backend helpers -------------------------------------------------
 
@@ -48,7 +171,7 @@
   // GM.xmlHttpRequest bypasses CORS and mixed-content blocking, which
   // plain fetch() cannot do here (https github.com -> http nas.home).
   async function requestJson(url) {
-    await apiTokenReady;
+    await settingsReady;
     return new Promise((resolve, reject) => {
       GM.xmlHttpRequest({
         method: "GET",
@@ -189,25 +312,8 @@
     setStatus(reason, "error");
   }
 
-  async function configureApiToken() {
-    await apiTokenReady;
-    const value = window.prompt(
-      "GExDis API token (leave blank to clear it):",
-      apiToken,
-    );
-    if (value === null) return;
-
-    apiToken = value.trim();
-    try {
-      await GM.setValue(TOKEN_STORAGE_KEY, apiToken);
-      setStatus(
-        apiToken ? "API token saved. Checking this release…" : "API token cleared. Checking this release…",
-      );
-      await queryVariant();
-    } catch (err) {
-      console.error("Could not save the GExDis API token:", err);
-      setStatus(`Could not save API token: ${err.message || err}`, "error");
-    }
+  function missingApiKeyMessage() {
+    return "GExDis API key is not configured. Open the userscript menu and choose “GExDis: set API key”.";
   }
 
   function displayProgress(progress) {
@@ -231,7 +337,7 @@
 
   async function queryVariant() {
     const targetUrl = location.href;
-    const processUrl = `${API_BASE}/process?url=${encodeURIComponent(targetUrl)}&dry_run=true`;
+    const processUrl = `${apiBase}/process?url=${encodeURIComponent(targetUrl)}&dry_run=true`;
 
     setButtonBusy(true);
     setStatus("Checking release and matching assets…");
@@ -255,7 +361,7 @@
       gexdisDownloads = 0;
       setButtonDisabled(
         err.status === 401
-          ? "API token required or invalid. Use the key button to set it."
+          ? "API key required or invalid. Open the userscript menu and choose “GExDis: set API key”."
           : `Availability check failed: ${err.message || err}`,
       );
     }
@@ -263,7 +369,7 @@
 
   async function onButtonClick() {
     const targetUrl = location.href;
-    const processUrl = `${API_BASE}/process?url=${encodeURIComponent(targetUrl)}`;
+    const processUrl = `${apiBase}/process?url=${encodeURIComponent(targetUrl)}`;
 
     setButtonBusy(true);
     setStatus("Starting download…");
@@ -287,7 +393,7 @@
       }
 
       // Poll the status endpoint until the job is done.
-      const statusUrl = `${API_BASE}${start.statusUrl}`;
+      const statusUrl = `${apiBase}${start.statusUrl}`;
 
       let result = start;
       for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
@@ -320,7 +426,7 @@
       console.error("onButtonClick failed:", err);
       setStatus(
         err.status === 401
-          ? "API token required or invalid. Use the key button to set it."
+          ? "API key required or invalid. Open the userscript menu and choose “GExDis: set API key”."
           : `Download status unavailable: ${err.message || err}`,
         "error",
       );
@@ -350,24 +456,11 @@
       "v-align-text-bottom",
     );
     anchor.dataset.viewComponent = "true";
-    anchor.href = `${API_BASE}/editor`;
+    anchor.href = `${apiBase}/editor`;
     anchor.target = "_blank";
     anchor.textContent = "⚙️";
     anchor.title = "Open GExDis editor";
     anchor.type = "button";
-
-    const tokenButton = document.createElement("button");
-    tokenButton.addEventListener("click", configureApiToken);
-    tokenButton.classList.add(
-      "Button--secondary",
-      "Button--small",
-      "Button",
-      "v-align-text-bottom",
-    );
-    tokenButton.dataset.viewComponent = "true";
-    tokenButton.textContent = TOKEN_BUTTON_LABEL;
-    tokenButton.title = "Set or clear the GExDis API token";
-    tokenButton.type = "button";
 
     const button = document.createElement("button");
     button.addEventListener("click", onButtonClick);
@@ -389,7 +482,6 @@
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
 
-    span.appendChild(tokenButton);
     span.appendChild(anchor);
     span.appendChild(button);
     span.appendChild(actions);
@@ -397,21 +489,42 @@
     div.appendChild(span);
 
     gexdisButton = button;
-    queryVariant();
+    void (async () => {
+      await settingsReady;
+      if (!apiToken) {
+        gexdisDownloads = 0;
+        setButtonDisabled(missingApiKeyMessage());
+        return;
+      }
+      await queryVariant();
+    })();
   }
 
   let gexdisButton = null;
   let gexdisDownloads = 0;
 
-  // Initial insert (page may still be loading, so also wait for DOMContentLoaded)
-  insertButton();
+  async function main() {
+    await settingsReady;
+    registerMenuCommands();
 
-  document.addEventListener("DOMContentLoaded", insertButton);
+    // On the rules editor page the script only bridges the configured API key.
+    if (isEditorBridgePage()) {
+      await bridgeEditorToken();
+      return;
+    }
 
-  // GitHub navigates with pjax; re-insert after each navigation
-  document.addEventListener("pjax:end", insertButton);
+    // Initial insert (page may still be loading, so also wait for DOMContentLoaded)
+    insertButton();
 
-  // Fallback: watch for the nav being re-rendered
-  const observer = new MutationObserver(insertButton);
-  observer.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener("DOMContentLoaded", insertButton);
+
+    // GitHub navigates with pjax; re-insert after each navigation
+    document.addEventListener("pjax:end", insertButton);
+
+    // Fallback: watch for the nav being re-rendered
+    const observer = new MutationObserver(insertButton);
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  void main();
 })();
