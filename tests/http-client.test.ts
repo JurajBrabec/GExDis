@@ -58,3 +58,31 @@ test('rejects oversized responses from their content-length header', async () =>
     'Page exceeds the 10-byte limit',
   );
 });
+
+test('a slow-but-steady download does not time out when the reader resets the idle timer', async () => {
+  globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        // Each chunk arrives well inside the idle window, but the total
+        // transfer easily exceeds it; only a reset-per-chunk keeps this alive.
+        for (let i = 0; i < 3; i += 1) {
+          if (init?.signal?.aborted) throw init.signal.reason;
+          controller.enqueue(new TextEncoder().encode('chunk'));
+        }
+        controller.close();
+      },
+    });
+    return new Response(stream);
+  }) as unknown as typeof fetch;
+
+  const { response, resetIdleTimeout } = await fetchAllowed(
+    'https://github.com/acme/start',
+  );
+  const bytes = await readResponseBytes(
+    response,
+    1024,
+    'Download',
+    resetIdleTimeout,
+  );
+  expect(new TextDecoder().decode(bytes)).toBe('chunkchunkchunk');
+});

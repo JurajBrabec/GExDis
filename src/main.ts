@@ -257,17 +257,24 @@ async function handleReleaseAssets(request: Request, url: URL): Promise<Response
     : `https://github.com/${repo}/releases/latest`;
   try {
     const variant = new GitHubReleaseVariant([]);
-    let { response, url: resolvedUrl } = await fetchAllowed(variant.pageUrl(page));
+    let { response, url: resolvedUrl, resetIdleTimeout } = await fetchAllowed(
+      variant.pageUrl(page),
+    );
     const transformed = variant.pageUrl(resolvedUrl);
     if (transformed !== resolvedUrl) {
-      ({ response } = await fetchAllowed(transformed));
+      ({ response, resetIdleTimeout } = await fetchAllowed(transformed));
     }
     if (!response.ok) {
       return json({ error: `GitHub returned HTTP ${response.status}` }, 422);
     }
     const links = variant.extractLinks(
       resolvedUrl,
-      await readResponseText(response, MAX_PAGE_BYTES, "Release page"),
+      await readResponseText(
+        response,
+        MAX_PAGE_BYTES,
+        "Release page",
+        resetIdleTimeout,
+      ),
     );
     const assets = [
       ...new Set(
@@ -405,7 +412,7 @@ export async function handleRequest(request: Request): Promise<Response> {
   }
 
   try {
-    let { response, url: resolvedUrl } = await fetchAllowed(
+    let { response, url: resolvedUrl, resetIdleTimeout } = await fetchAllowed(
       selected.variant.pageUrl(sourceUrl),
     );
     if (!response.ok) {
@@ -422,7 +429,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     // resolvedUrl is kept as the pre-transform URL so capture derivation (e.g. TAG) still applies.
     const transformedUrl = selected.variant.pageUrl(resolvedUrl);
     if (transformedUrl !== resolvedUrl) {
-      ({ response } = await fetchAllowed(transformedUrl));
+      ({ response, resetIdleTimeout } = await fetchAllowed(transformedUrl));
       if (!response.ok) {
         await logger.warn("Source page returned an error", {
           status: response.status,
@@ -436,7 +443,12 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
     const links = selected.variant.extractLinks(
       resolvedUrl,
-      await readResponseText(response, MAX_PAGE_BYTES, "Release page"),
+      await readResponseText(
+        response,
+        MAX_PAGE_BYTES,
+        "Release page",
+        resetIdleTimeout,
+      ),
     );
     const captures = applySetVariables(selected.rule, {
       ...selected.captures,
