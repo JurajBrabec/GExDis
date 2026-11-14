@@ -719,13 +719,18 @@ export async function processDownloads(
       if (!isAllowedUrl(link.url)) {
         throw new Error("Download host is not allowed");
       }
-      const { response } = await fetchAllowed(link.url);
+      const { response, resetIdleTimeout } = await fetchAllowed(link.url);
       if (!response.ok) {
         throw new Error(`Download returned HTTP ${response.status}`);
       }
       await Bun.write(
         temporaryPath,
-        await readResponseBytes(response, MAX_DOWNLOAD_BYTES, "Download"),
+        await readResponseBytes(
+          response,
+          MAX_DOWNLOAD_BYTES,
+          "Download",
+          resetIdleTimeout,
+        ),
       );
       fileCaptures.DOWNLOADED = name;
       actions.push({
