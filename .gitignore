@@ -3,6 +3,8 @@ app/bin
 app/config/rules.yml
 app/config/rules.yml.bak
 app/config/rules.yml.tmp
+app/config/versions.yml
+app/config/versions.yml.tmp
 app/download
 app/log
 app/release

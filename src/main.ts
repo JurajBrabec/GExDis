@@ -5,7 +5,7 @@ import {
   MAX_PAGE_BYTES,
   readResponseText,
 } from "./http-client.ts";
-import { processDownloads } from "./processor.ts";
+import { processDownloads, safeName } from "./processor.ts";
 import {
   loadRules,
   validateRulesText,
@@ -15,6 +15,12 @@ import {
 } from "./rules.ts";
 import { defaultRules, GitHubReleaseVariant, isAllowedUrl, selectVariant } from "./variants.ts";
 import { JobStore } from "./jobs.ts";
+import {
+  findDownloadedFile,
+  findLatestEntry,
+  findVersionEntry,
+  loadVersions,
+} from "./versions.ts";
 import { editorPage } from "./editor-page.ts";
 import {
   RuleEditError,
@@ -476,12 +482,27 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
 
     if (dryRun) {
-      const actions = downloads.map((link) => ({
-        variant: selected.variant.name,
-        url: link.url,
-        status: "planned",
-        captures: link.captures,
-      }));
+      const versions = await loadVersions(config.versionsFile);
+      const versionEntry = findVersionEntry(
+        versions,
+        selected.variant.name,
+        selected.rule.name,
+      );
+      const latestEntry = findLatestEntry(versionEntry);
+      const actions = downloads.map((link) => {
+        const downloaded = findDownloadedFile(
+          versionEntry,
+          safeName({ url: link.url, path: link.path }),
+        );
+        return {
+          variant: selected.variant.name,
+          url: link.url,
+          status: "planned",
+          captures: link.captures,
+          alreadyDownloaded: downloaded !== undefined,
+          ...(downloaded ? { downloadedAt: downloaded.timestamp } : {}),
+        };
+      });
       await Promise.all(
         actions.map((action) =>
           logger.info("Dry-run action planned", {
@@ -495,6 +516,19 @@ export async function handleRequest(request: Request): Promise<Response> {
         variant: selected.variant.name,
         count: actions.length,
       });
+      // For variants with a version concept (currently github's {TAG}), also
+      // report the latest previously downloaded version and whether this
+      // request's version matches it.
+      const latestInfo =
+        versionEntry?.latest !== undefined
+          ? {
+              latestDownloadedTag: versionEntry.latest,
+              latestDownloadedAt: latestEntry?.timestamp,
+              isLatestDownloaded:
+                captures.TAG !== undefined &&
+                captures.TAG === versionEntry.latest,
+            }
+          : {};
       if (config.dryRun) {
         const reason = "Downloads are disabled because GExDis is configured for dry-run mode";
         return json(
@@ -504,6 +538,7 @@ export async function handleRequest(request: Request): Promise<Response> {
             reason,
             count: actions.length,
             actions,
+            ...latestInfo,
           },
           503,
         );
@@ -513,6 +548,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         phase: "check",
         count: actions.length,
         actions,
+        ...latestInfo,
       });
     }
 

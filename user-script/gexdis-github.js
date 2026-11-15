@@ -9,7 +9,7 @@
 // @grant        GM.registerMenuCommand
 // @connect      nas.home
 // @connect      http://nas.home:10203
-// @version      2026.11.01
+// @version      2026.11.15
 // @author       NOiSE
 // @description  Send GitHub repository artefacts to GexDis downloader
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=github.com
@@ -229,6 +229,9 @@
     if (action.path) parts.push(action.path);
     if (action.rule) parts.push(`Rule: ${action.rule}`);
     if (action.error) parts.push(action.error);
+    if (action.alreadyDownloaded && action.downloadedAt) {
+      parts.push(`Downloaded ${new Date(action.downloadedAt).toLocaleString()}`);
+    }
     if (action.status === "unpacked") parts.push(`${action.unpacked ?? 0} files extracted`);
     if (action.status === "copied") parts.push(`${action.copied ?? 0} items copied`);
     if (action.status === "removed") {
@@ -256,7 +259,12 @@
           summary: `${action.removed ?? 0} removed${action.failed ? ` · ${action.failed} failed` : ""}`,
         };
       case "planned":
-        return { icon: "✓", label: "Matched", tone: "success", summary: action.url?.split("/").pop() || "asset" };
+        return {
+          icon: action.alreadyDownloaded ? "↺" : "✓",
+          label: action.alreadyDownloaded ? "Already downloaded" : "Matched",
+          tone: action.alreadyDownloaded ? "warning" : "success",
+          summary: action.url?.split("/").pop() || "asset",
+        };
       default:
         return { icon: "?", label: action.status || "Unknown", tone: "info", summary: action.path || "" };
     }
@@ -335,6 +343,30 @@
     setStatus(`${phase}${position}${file}${progress.message && !file ? ` · ${progress.message}` : ""}`);
   }
 
+  // Builds a short " · already downloaded" / " · new version available" note
+  // from the dry-run response's version-tracking fields (see src/versions.ts).
+  function downloadedStatusSuffix(result) {
+    const allDownloaded =
+      Array.isArray(result.actions) &&
+      result.actions.length > 0 &&
+      result.actions.every((action) => action.alreadyDownloaded);
+    if (result.latestDownloadedTag) {
+      if (result.isLatestDownloaded) {
+        const when = result.latestDownloadedAt
+          ? ` on ${new Date(result.latestDownloadedAt).toLocaleString()}`
+          : "";
+        return ` · Already downloaded${when}.`;
+      }
+      return ` · Latest downloaded version is ${result.latestDownloadedTag}.`;
+    }
+    if (allDownloaded) {
+      const downloadedAt = result.actions.find((action) => action.downloadedAt)?.downloadedAt;
+      const when = downloadedAt ? ` on ${new Date(downloadedAt).toLocaleString()}` : "";
+      return ` · Already downloaded${when}.`;
+    }
+    return "";
+  }
+
   async function queryVariant() {
     const targetUrl = location.href;
     const processUrl = `${apiBase}/process?url=${encodeURIComponent(targetUrl)}&dry_run=true`;
@@ -355,7 +387,10 @@
       const title = (result.actions || []).map((action) => action.url?.split("/").pop()).filter(Boolean).join("\n");
       gexdisButton.title = title;
       setButtonBusy(false);
-      setStatus(`${gexdisDownloads} matching ${gexdisDownloads === 1 ? "asset" : "assets"} ready to download.`, "success");
+      setStatus(
+        `${gexdisDownloads} matching ${gexdisDownloads === 1 ? "asset" : "assets"} ready to download.${downloadedStatusSuffix(result)}`,
+        "success",
+      );
     } catch (err) {
       console.error("queryVariant failed:", err);
       gexdisDownloads = 0;

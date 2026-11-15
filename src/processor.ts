@@ -24,6 +24,7 @@ import {
   MAX_DOWNLOAD_BYTES,
   readResponseBytes,
 } from "./http-client.ts";
+import { recordDownload } from "./versions.ts";
 
 export interface ActionResult {
   variant: string;
@@ -55,6 +56,9 @@ export interface ProcessorProgress {
 interface ProcessorConfig {
   tempDir: string;
   appDir: string;
+  // Optional: when set, each downloaded file is recorded to this versions
+  // tracking file (see src/versions.ts). Omitted in tests that don't care.
+  versionsFile?: string;
 }
 
 // Tracks, per link, which raw copy-rule strings were invalid, resolvable, or actually matched a file.
@@ -160,7 +164,7 @@ function reportUnmatchedCopyRules(
   );
 }
 
-function safeName(link: PageLink): string {
+export function safeName(link: PageLink): string {
   const name = basename(new URL(link.url).pathname);
   return name && name !== "." && name !== ".." ? name : "download";
 }
@@ -745,6 +749,12 @@ export async function processDownloads(
         url: link.url,
         file: name,
       });
+      if (config.versionsFile) {
+        await recordDownload(config.versionsFile, variant.name, rule.name, {
+          filename: name,
+          tag: fileCaptures.TAG,
+        });
+      }
 
       // Remove rules run once per link, before any copy, so they clean up
       // pre-existing files (e.g. older versions) without touching files that

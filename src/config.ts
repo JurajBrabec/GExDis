@@ -4,6 +4,7 @@ export interface AppConfig {
   port: number;
   configDir: string;
   rulesFile: string;
+  versionsFile: string;
   tempDir: string;
   downloadDir: string;
   releaseDir: string;
@@ -59,6 +60,7 @@ export function loadConfig(environment = process.env): AppConfig {
     port: Number(environment.PORT ?? "3000"),
     configDir,
     rulesFile: environment.RULES_FILE ?? `${configDir}/rules.yml`,
+    versionsFile: environment.VERSIONS_FILE ?? `${configDir}/versions.yml`,
     tempDir: environment.TMP_DIR ?? `${appDir}/tmp`,
     downloadDir: environment.DOWNLOAD_DIR ?? `${appDir}/download`,
     releaseDir: environment.RELEASE_DIR ?? `${appDir}/release`,

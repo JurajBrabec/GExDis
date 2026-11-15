@@ -29,6 +29,7 @@ GEXDIS: a Bun HTTP service that scrapes release/link pages, downloads matching f
 - `src/http-client.ts` owns upstream redirect checks, the 30-second fetch timeout, and response caps (10 MiB for pages; 512 MiB for downloads). `src/archive.ts` owns archive path checks and extraction limits (512 MiB input, 20,000 entries, 1 GiB expanded output). `/process` permits at most four active jobs.
 - `/app/...` copy targets map under `APP_DIR`; preserve the containment checks in `src/processor.ts`. Remove rules must name one literal direct subdirectory of `/app`. Archive writes for every format must go through the safe path resolver.
 - `src/config.ts` is the env-var source of truth. Default `APP_DIR` is `${cwd}/app`, so run commands from the repo root.
+- `src/versions.ts` tracks downloaded versions in `app/config/versions.yml` (`VERSIONS_FILE`), structured like `rules.yml` (`variants: { <name>: [{ name, latest?, history: [{timestamp, filename, tag?}] }] }`). `src/processor.ts` records one history entry per completed (non-dry-run) download and updates `latest` when a `{TAG}` capture is present (GitHub). `src/main.ts` reads it for `dry_run=true` responses to report `alreadyDownloaded`/`downloadedAt` per asset and `latestDownloadedTag`/`latestDownloadedAt`/`isLatestDownloaded` for the matched rule.
 
 ## Runtime data and config
 
