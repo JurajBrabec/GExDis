@@ -9,7 +9,7 @@
 // @grant        GM.registerMenuCommand
 // @connect      nas.home
 // @connect      http://nas.home:10203
-// @version      2026.11.15.2
+// @version      2026.11.15.3
 // @author       NOiSE
 // @description  Send GitHub repository artefacts to GexDis downloader
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=github.com
@@ -474,6 +474,13 @@
 
       if (result.status === "completed") {
         const failed = (result.actions || []).filter((action) => action.status === "failed").length;
+        // Any file that reached the "downloaded" step is now on record
+        // server-side (see src/versions.ts) even if a later copy/unpack step
+        // failed, so the button should reflect "already downloaded" right away
+        // instead of waiting for a page refresh.
+        if ((result.actions || []).some((action) => action.status === "downloaded")) {
+          setButtonTone(true);
+        }
         setStatus(
           failed
             ? `Processing finished · ${failed} of ${result.actions.length} actions failed.`
