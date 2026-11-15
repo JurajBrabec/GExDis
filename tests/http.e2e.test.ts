@@ -63,6 +63,11 @@ test("processes a GitHub URL through the HTTP handler end to end", async () => {
   const originalFetch = globalThis.fetch;
   let assetFetches = 0;
   globalThis.fetch = mock(async (url: string) => {
+    if (url.includes("/expanded_assets/v2")) {
+      return new Response(
+        '<a href="/acme/tool/releases/download/v2/tool-v2.exe">asset</a>',
+      );
+    }
     if (url.includes("/expanded_assets/")) {
       return new Response(
         '<a href="/acme/tool/releases/download/v1/tool.exe">asset</a>',
@@ -133,6 +138,42 @@ test("processes a GitHub URL through the HTTP handler end to end", async () => {
   expect(await readFile(join(appDir, "bin", "tool.exe"), "utf8")).toBe(
     "binary",
   );
+
+  // The completed job recorded the downloaded version; a dry-run for the
+  // same tag now reports it as already downloaded, and for a new tag it does not.
+  const versionsText = await readFile(
+    join(configDir, "versions.yml"),
+    "utf8",
+  );
+  expect(versionsText).toContain("name: github");
+  expect(versionsText).toContain("latest: v1");
+  expect(versionsText).toContain("tool.exe");
+
+  requestUrl.searchParams.set("dry_run", "true");
+  const repeatDry = await handleRequest(new Request(requestUrl));
+  const repeatResult = (await repeatDry.json()) as {
+    actions: Array<{ alreadyDownloaded?: boolean; downloadedAt?: string }>;
+    latestDownloadedTag?: string;
+    isLatestDownloaded?: boolean;
+  };
+  expect(repeatResult.actions[0].alreadyDownloaded).toBe(true);
+  expect(typeof repeatResult.actions[0].downloadedAt).toBe("string");
+  expect(repeatResult.latestDownloadedTag).toBe("v1");
+  expect(repeatResult.isLatestDownloaded).toBe(true);
+
+  requestUrl.searchParams.set(
+    "url",
+    "https://github.com/acme/tool/releases/tag/v2",
+  );
+  const newTagDry = await handleRequest(new Request(requestUrl));
+  const newTagResult = (await newTagDry.json()) as {
+    actions: Array<{ alreadyDownloaded?: boolean }>;
+    latestDownloadedTag?: string;
+    isLatestDownloaded?: boolean;
+  };
+  expect(newTagResult.actions[0].alreadyDownloaded).toBe(false);
+  expect(newTagResult.latestDownloadedTag).toBe("v1");
+  expect(newTagResult.isLatestDownloaded).toBe(false);
 });
 
 test("resolves a /releases/latest redirect before applying the expanded_assets page", async () => {

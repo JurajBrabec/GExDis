@@ -32,6 +32,8 @@ The default server listens on `http://localhost:3000`. Because the default bind 
 
 If `app/config/rules.yml` does not exist, the service writes the fallback rules from `src/variants.ts`. That live rules file and runtime output are gitignored. The tracked `app/config/default.rules.yml` is **not** loaded automatically.
 
+Each completed (non-dry-run) download is recorded to `app/config/versions.yml` (or `VERSIONS_FILE`), keyed by variant and rule name. GitHub rules track a `latest` downloaded tag; all rules keep a bounded `history` of `{timestamp, filename}` entries (GitHub entries also include `tag`). `dry_run=true` responses use this file to report, per matched asset, whether it was already downloaded (`alreadyDownloaded`, `downloadedAt`), and for GitHub rules, the overall `latestDownloadedTag`, `latestDownloadedAt`, and whether the requested release `isLatestDownloaded`.
+
 To test a source without downloading assets, pass `dry_run=true`:
 
 ```text
@@ -138,7 +140,7 @@ curl --get http://localhost:3000/process \
   --data-urlencode "dry_run=true"
 ```
 
-The plan includes matching asset URLs and captures. Setting `DRY_RUN=true` in the environment also disables real downloads; in that mode the service returns the plan with a disabled status.
+The plan includes matching asset URLs and captures, plus per-asset `alreadyDownloaded`/`downloadedAt` and (for GitHub rules) `latestDownloadedTag`/`latestDownloadedAt`/`isLatestDownloaded` from `app/config/versions.yml`. Setting `DRY_RUN=true` in the environment also disables real downloads; in that mode the service returns the plan with a disabled status.
 
 ### Rules endpoints
 
@@ -207,6 +209,7 @@ Configuration is read from environment variables by `src/config.ts`:
 | `APP_DIR` | `<cwd>/app` (`/app` if cwd is `/app`) | Runtime root; `/app/...` copy targets are mapped under it. |
 | `CONFIG_DIR` | `${APP_DIR}/config` | Directory used to derive the default rules path. |
 | `RULES_FILE` | `${CONFIG_DIR}/rules.yml` | Live rules file. |
+| `VERSIONS_FILE` | `${CONFIG_DIR}/versions.yml` | Downloaded-version tracking file, updated after each completed download. |
 | `TMP_DIR` | `${APP_DIR}/tmp` | Temporary downloads and extraction directories. |
 | `LOG_DIR` | `${APP_DIR}/log` | Daily log output. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`; filters file and console logs. Invalid values fall back to `info`. |

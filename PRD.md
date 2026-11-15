@@ -37,6 +37,26 @@ Processing is sequential within one job. The service accepts at most four active
 
 - `GET /process?...&dry_run=true` fetches and inspects the source page, returning a plan without downloading assets or changing target files.
 - `DRY_RUN=true` also prevents real processing. The service returns its plan with a disabled status rather than creating a job.
+- The plan reports, per matched asset, whether it was already downloaded according to `app/config/versions.yml` (`alreadyDownloaded`, `downloadedAt`); for GitHub rules it also reports the tracked `latestDownloadedTag`, `latestDownloadedAt`, and whether the requested release `isLatestDownloaded`.
+
+## Version tracking
+
+Each completed (non-dry-run) download is recorded to `app/config/versions.yml` (or `VERSIONS_FILE`), structured like `rules.yml`:
+
+```yaml
+variants:
+  github:
+    - name: acme-tool
+      latest: v1.2.3
+      history:
+        - { timestamp: '2026-01-01T00:00:00.000Z', tag: v1.2.3, filename: tool-v1.2.3.exe }
+  peeplink:
+    - name: default
+      history:
+        - { timestamp: '2026-01-02T00:00:00.000Z', filename: archive.rar }
+```
+
+GitHub rules (which capture a release tag) track `latest`; peeplink rules have no version concept and rely solely on matching a previously seen `filename` in `history`. History is bounded per rule.
 
 ## Rules
 
