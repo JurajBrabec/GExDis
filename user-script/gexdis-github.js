@@ -9,7 +9,7 @@
 // @grant        GM.registerMenuCommand
 // @connect      nas.home
 // @connect      http://nas.home:10203
-// @version      2026.11.15
+// @version      2026.11.15.1
 // @author       NOiSE
 // @description  Send GitHub repository artefacts to GexDis downloader
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=github.com
