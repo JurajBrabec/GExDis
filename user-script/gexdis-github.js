@@ -9,7 +9,7 @@
 // @grant        GM.registerMenuCommand
 // @connect      nas.home
 // @connect      http://nas.home:10203
-// @version      2026.11.15
+// @version      2026.11.15.2
 // @author       NOiSE
 // @description  Send GitHub repository artefacts to GexDis downloader
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=github.com
@@ -24,6 +24,7 @@
   const DIV_SELECTOR =
     "#repo-content-pjax-container > div > div > div > div.Box-body > div.d-flex.flex-md-row.flex-column > div.d-flex.flex-row.flex-1.tmp-mb-3.wb-break-word > div.flex-1";
   const BUTTON_LABEL = "Download assets with GExDis";
+  const BUTTON_LABEL_REDOWNLOAD = "Re-download assets with GExDis";
   const BUTTON_BUSY_LABEL = "GExDis working…";
 
   // Settings live in the userscript manager's storage and are edited from its
@@ -216,10 +217,19 @@
       #gexdis-status { flex-basis: 100%; color: var(--color-fg-muted, #656d76); font-size: 12px; line-height: 1.4; margin-top: 3px; }
       #gexdis-status[data-tone="error"] { color: var(--color-danger-fg, #cf222e); }
       #gexdis-status[data-tone="success"] { color: var(--color-success-fg, #1a7f37); }
+      #gexdis-status[data-tone="warning"] { color: var(--color-attention-fg, #9a6700); }
+      #gexdis-container .Button--warning {
+        color: var(--color-attention-fg, #9a6700);
+        background-color: var(--color-attention-subtle, #fff8c5);
+        border-color: var(--color-attention-muted, #d4a72c);
+      }
+      #gexdis-container .Button--warning:hover:not(:disabled) {
+        background-color: var(--color-attention-muted, #d4a72c);
+      }
       #gexdis-actions { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
       #gexdis-actions .gexdis-action-tag { display: inline-flex; align-items: center; gap: 4px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      #gexdis-actions .gexdis-action-tag strong { font-weight: 600; }
-      #gexdis-actions .gexdis-action-tag > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      #gexdis-actions .gexdis-action-tag strong { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      #gexdis-actions .gexdis-action-tag > span:last-child:not(:empty) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     `;
     document.head.appendChild(style);
   }
@@ -259,11 +269,13 @@
           summary: `${action.removed ?? 0} removed${action.failed ? ` · ${action.failed} failed` : ""}`,
         };
       case "planned":
+        // Just the asset name, colored green (new) or yellow (already
+        // downloaded); no "Matched"/"Already downloaded" prefix word.
         return {
           icon: action.alreadyDownloaded ? "↺" : "✓",
-          label: action.alreadyDownloaded ? "Already downloaded" : "Matched",
+          label: action.url?.split("/").pop() || "asset",
           tone: action.alreadyDownloaded ? "warning" : "success",
-          summary: action.url?.split("/").pop() || "asset",
+          summary: "",
         };
       default:
         return { icon: "?", label: action.status || "Unknown", tone: "info", summary: action.path || "" };
@@ -306,10 +318,20 @@
     status.dataset.tone = tone;
   }
 
+  // Swaps the button between its primary (new assets, green) and warning
+  // (every matched asset already downloaded, yellow) look.
+  function setButtonTone(alreadyDownloaded) {
+    gexdisAlreadyDownloaded = alreadyDownloaded;
+    if (!gexdisButton) return;
+    gexdisButton.classList.toggle("Button--primary", !alreadyDownloaded);
+    gexdisButton.classList.toggle("Button--warning", alreadyDownloaded);
+  }
+
   function setButtonBusy(busy) {
     if (!gexdisButton) return;
     gexdisButton.disabled = busy;
-    gexdisButton.textContent = busy ? BUTTON_BUSY_LABEL : `${BUTTON_LABEL} (${gexdisDownloads})`;
+    const label = gexdisAlreadyDownloaded ? BUTTON_LABEL_REDOWNLOAD : BUTTON_LABEL;
+    gexdisButton.textContent = busy ? BUTTON_BUSY_LABEL : `${label} (${gexdisDownloads})`;
   }
 
   function setButtonDisabled(reason) {
@@ -343,28 +365,24 @@
     setStatus(`${phase}${position}${file}${progress.message && !file ? ` · ${progress.message}` : ""}`);
   }
 
-  // Builds a short " · already downloaded" / " · new version available" note
-  // from the dry-run response's version-tracking fields (see src/versions.ts).
-  function downloadedStatusSuffix(result) {
+  // Whether every matched asset in a dry-run result was already downloaded,
+  // and when, from the dry-run response's version-tracking fields
+  // (see src/versions.ts). Returns undefined when that isn't the case.
+  function allDownloadedInfo(result) {
     const allDownloaded =
       Array.isArray(result.actions) &&
       result.actions.length > 0 &&
       result.actions.every((action) => action.alreadyDownloaded);
     if (result.latestDownloadedTag) {
-      if (result.isLatestDownloaded) {
-        const when = result.latestDownloadedAt
-          ? ` on ${new Date(result.latestDownloadedAt).toLocaleString()}`
-          : "";
-        return ` · Already downloaded${when}.`;
-      }
-      return ` · Latest downloaded version is ${result.latestDownloadedTag}.`;
+      if (!result.isLatestDownloaded) return undefined;
+      return { downloadedAt: result.latestDownloadedAt };
     }
     if (allDownloaded) {
-      const downloadedAt = result.actions.find((action) => action.downloadedAt)?.downloadedAt;
-      const when = downloadedAt ? ` on ${new Date(downloadedAt).toLocaleString()}` : "";
-      return ` · Already downloaded${when}.`;
+      return {
+        downloadedAt: result.actions.find((action) => action.downloadedAt)?.downloadedAt,
+      };
     }
-    return "";
+    return undefined;
   }
 
   async function queryVariant() {
@@ -386,12 +404,19 @@
       gexdisDownloads = result.count ?? result.actions?.length ?? 0;
       const title = (result.actions || []).map((action) => action.url?.split("/").pop()).filter(Boolean).join("\n");
       gexdisButton.title = title;
+      const downloaded = allDownloadedInfo(result);
+      setButtonTone(downloaded !== undefined);
       setButtonBusy(false);
       insertActionTags(result.actions || []);
-      setStatus(
-        `${gexdisDownloads} matching ${gexdisDownloads === 1 ? "asset" : "assets"} ready to download.${downloadedStatusSuffix(result)}`,
-        "success",
-      );
+      const assetWord = gexdisDownloads === 1 ? "asset" : "assets";
+      if (downloaded) {
+        const when = downloaded.downloadedAt
+          ? ` on ${new Date(downloaded.downloadedAt).toLocaleString()}`
+          : "";
+        setStatus(`${gexdisDownloads} matching ${assetWord} already downloaded${when}.`, "warning");
+      } else {
+        setStatus(`${gexdisDownloads} matching ${assetWord} ready to download.`, "success");
+      }
     } catch (err) {
       console.error("queryVariant failed:", err);
       gexdisDownloads = 0;
@@ -538,6 +563,7 @@
 
   let gexdisButton = null;
   let gexdisDownloads = 0;
+  let gexdisAlreadyDownloaded = false;
 
   async function main() {
     await settingsReady;
