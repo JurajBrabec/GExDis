@@ -387,6 +387,7 @@
       const title = (result.actions || []).map((action) => action.url?.split("/").pop()).filter(Boolean).join("\n");
       gexdisButton.title = title;
       setButtonBusy(false);
+      insertActionTags(result.actions || []);
       setStatus(
         `${gexdisDownloads} matching ${gexdisDownloads === 1 ? "asset" : "assets"} ready to download.${downloadedStatusSuffix(result)}`,
         "success",
